@@ -1,0 +1,110 @@
+import { Link } from 'react-router-dom';
+import { api, comoLista } from '../lib/api';
+import { useDados } from '../lib/useDados';
+import { STATUS, numero, statusPorId, texto } from '../lib/types';
+import { Cabecalho } from '../components/Layout';
+import { Distribuicao, Erro, Esqueleto, Selo, Tile, Vazio } from '../components/Base';
+import { IconeAtualizar } from '../components/Icones';
+
+export default function Painel() {
+  const { dados, erro, carregando, recarregar } = useDados(async () => comoLista(await api.ordensServico()));
+  const ordens = dados ?? [];
+
+  const porStatus = STATUS.map((s) => ({
+    ...s,
+    valor: ordens.filter((o) => numero(o, 'status', 'Status') === s.id).length,
+  }));
+
+  const abertas = ordens.filter((o) => {
+    const s = numero(o, 'status', 'Status');
+    return s !== null && s < 4;
+  }).length;
+  const emExecucao = porStatus.find((s) => s.id === 3)?.valor ?? 0;
+  const entregues = porStatus.find((s) => s.id === 5)?.valor ?? 0;
+
+  return (
+    <>
+      <Cabecalho
+        titulo="Painel"
+        descricao="Visão geral das ordens de serviço em circulação na oficina."
+        acao={
+          <button onClick={recarregar} className="btn-ghost px-3 py-2 text-xs" disabled={carregando}>
+            <IconeAtualizar className={`h-4 w-4 ${carregando ? 'animate-spin' : ''}`} />
+            Atualizar
+          </button>
+        }
+      />
+
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <Tile rotulo="Ordens no total" valor={ordens.length} carregando={carregando} apoio="Registradas na base" />
+        <Tile rotulo="Em aberto" valor={abertas} cor="#d95926" carregando={carregando} apoio="Ainda não finalizadas" />
+        <Tile rotulo="Em execução" valor={emExecucao} cor="#c98500" carregando={carregando} apoio="Mecânico trabalhando" />
+        <Tile rotulo="Entregues" valor={entregues} cor="#008300" carregando={carregando} apoio="Ciclo concluído" />
+      </div>
+
+      <section className="card mt-6 p-5">
+        <div className="mb-4 flex items-baseline justify-between">
+          <h2 className="text-sm font-semibold">Distribuição por status</h2>
+          <span className="text-xs text-ink-mute">{ordens.length} ordens</span>
+        </div>
+
+        {carregando ? (
+          <div className="h-2.5 w-full animate-pulse rounded-full bg-raised" />
+        ) : (
+          <>
+            <Distribuicao partes={porStatus.map((s) => ({ nome: s.nome, valor: s.valor, cor: s.cor }))} />
+            <ul className="mt-4 flex flex-wrap gap-x-5 gap-y-2">
+              {porStatus.map((s) => (
+                <li key={s.id} className="flex items-center gap-2 text-xs">
+                  <span className="h-2.5 w-2.5 rounded-sm" style={{ background: s.cor }} />
+                  <span className="text-ink-soft">{s.nome}</span>
+                  <span className="font-semibold tabular-nums">{s.valor}</span>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+      </section>
+
+      <section className="mt-6">
+        <div className="mb-3 flex items-baseline justify-between">
+          <h2 className="text-sm font-semibold">Ordens recentes</h2>
+          <Link to="/ordens" className="text-xs font-semibold text-brand hover:underline">
+            ver todas
+          </Link>
+        </div>
+
+        {erro && <Erro mensagem={erro} aoTentar={recarregar} />}
+        {carregando && !erro && <Esqueleto linhas={4} />}
+
+        {!carregando && !erro && ordens.length === 0 && (
+          <Vazio titulo="Nenhuma ordem encontrada" descricao="Quando a oficina registrar ordens, elas aparecem aqui." />
+        )}
+
+        <div className="space-y-2">
+          {ordens.slice(0, 6).map((o, i) => {
+            const id = numero(o, 'id', 'Id');
+            const s = numero(o, 'status', 'Status') ?? 0;
+            return (
+              <div key={id ?? i} className="card flex items-center gap-4 px-4 py-3.5 transition-colors hover:border-ink-mute/40">
+                <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl font-mono text-xs font-bold"
+                     style={{ background: `${statusPorId(s).cor}1a`, color: statusPorId(s).cor }}>
+                  #{id ?? '?'}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-semibold">
+                    Cliente {texto(o, 'idCliente', 'clienteId')} · Veículo {texto(o, 'idVeiculo', 'veiculoId')}
+                  </p>
+                  <p className="truncate text-xs text-ink-mute">
+                    Responsável {texto(o, 'idFuncionario', 'funcionarioId')}
+                  </p>
+                </div>
+                <Selo status={s} />
+              </div>
+            );
+          })}
+        </div>
+      </section>
+    </>
+  );
+}
