@@ -56,7 +56,9 @@ VITE_API_BASE=https://outro-gateway.azure-api.net
 
 ## Deploy
 
-`.github/workflows/deploy.yml` publica no GitHub Pages a cada push na `main`. Pull request roda apenas build e verificação de tipos, sem publicar.
+`.github/workflows/deploy.yml` publica no GitHub Pages a cada push na `main`, empurrando o build para o branch `gh-pages`. Pull request roda apenas build e verificação de tipos, sem publicar.
+
+A publicação é um push de branch, e não a API do Pages: o token do Actions desta conta não tem permissão para criar o site via API. Empurrar para `gh-pages` precisa apenas de `contents: write`.
 
 O `base` do Vite é `/postech-front/`, que é o caminho onde o Pages serve o site. O roteamento usa `HashRouter` porque hospedagem estática não reescreve rotas — sem isso, atualizar a página em `/ordens` daria 404.
 

@@ -2,8 +2,13 @@ name: Deploy no GitHub Pages
 
 # Build do painel e publicação no GitHub Pages.
 #
-# Push na main -> build e deploy
+# Push na main -> build e publicação no branch gh-pages
 # Pull request -> apenas build, para o PR não publicar nada
+#
+# A publicação é um push de branch, e não a API do Pages: o token do Actions
+# desta conta não tem permissão para criar o site via API — configure-pages com
+# enablement:true falha com "Resource not accessible by integration". Empurrar o
+# conteúdo para gh-pages precisa apenas de contents:write, que o token tem.
 
 on:
   push:
@@ -21,16 +26,10 @@ concurrency:
 
 jobs:
   build:
-    name: Build
+    name: Build e publicação
     runs-on: ubuntu-latest
-    # pages: write e necessario aqui, e nao so no job de deploy: quem cria o
-    # site do Pages na primeira execucao e o configure-pages, que roda neste
-    # job. Sem a permissao, ele falha com "Resource not accessible by
-    # integration".
     permissions:
-      contents: read
-      pages: write
-      id-token: write
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -48,32 +47,21 @@ jobs:
       - name: Build
         run: npm run build
 
-      # enablement: true cria o site do Pages na primeira execução, então não é
-      # preciso habilitar nada à mão no Settings antes do primeiro deploy.
-      - name: Configurar Pages
+      - name: Publicar no branch gh-pages
         if: github.event_name != 'pull_request'
-        uses: actions/configure-pages@v5
-        with:
-          enablement: true
+        run: |
+          set -euo pipefail
 
-      - name: Empacotar artefato
-        if: github.event_name != 'pull_request'
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: dist
+          # Sem .nojekyll o Pages roda Jekyll, que ignora diretórios e arquivos
+          # começando com underscore — os assets do Vite não seriam servidos.
+          touch dist/.nojekyll
 
-  deploy:
-    name: Deploy
-    needs: build
-    if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    permissions:
-      pages: write
-      id-token: write
-    steps:
-      - name: Publicar
-        id: deployment
-        uses: actions/deploy-pages@v4
+          cd dist
+          git init -q -b gh-pages
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "deploy: ${GITHUB_SHA::7}"
+          git push -f \
+            "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" \
+            gh-pages
