@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
 import { ErroApi } from '../lib/api';
 import { Marca } from '../components/Layout';
-import { IconeEscudo, IconeRaio, IconeRede } from '../components/Icones';
+import { IconeEscudo, IconeOrdem, IconePeca } from '../components/Icones';
 
 const CPF_DEMO_CLIENTE = '98765432100';
 const CPF_DEMO_FUNCIONARIO = '11111111111';
@@ -63,15 +63,15 @@ export default function Entrar() {
             </span>
           </h1>
           <p className="mt-5 text-[15px] leading-relaxed text-ink-soft">
-            Ordens de serviço, clientes, veículos e estoque — servidos por uma API em Kubernetes,
-            protegidos por um gateway e observados em tempo real.
+            Da entrada do veículo à entrega: acompanhe cada ordem, aprove orçamentos e
+            mantenha o estoque sob controle, sem planilha paralela.
           </p>
 
           <ul className="mt-9 space-y-4">
             {[
-              { Icone: IconeEscudo, t: 'Autenticação por CPF', d: 'Função serverless valida o CPF e emite um JWT de 15 minutos.' },
-              { Icone: IconeRede, t: 'Gateway como única porta', d: 'O API Management valida o token e aplica rate limit antes do cluster.' },
-              { Icone: IconeRaio, t: 'Rastro ponta a ponta', d: 'Cada chamada carrega um correlation ID que liga tela, log e trace.' },
+              { Icone: IconeOrdem, t: 'Fluxo sem ruído', d: 'Cada ordem percorre um caminho claro, do diagnóstico à entrega.' },
+              { Icone: IconePeca, t: 'Estoque sempre certo', d: 'Peça usada na ordem baixa do estoque na hora, sem conferência manual.' },
+              { Icone: IconeEscudo, t: 'Cada um vê o que é seu', d: 'O cliente acompanha o próprio veículo; a equipe enxerga a oficina toda.' },
             ].map(({ Icone, t, d }) => (
               <li key={t} className="flex gap-3.5">
                 <div className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-line bg-raised">
@@ -86,7 +86,7 @@ export default function Entrar() {
           </ul>
         </div>
 
-        <p className="font-mono text-[11px] text-ink-mute">Tech Challenge · Fase 3 · 13SOAT</p>
+        <p className="text-[11px] text-ink-mute">© 2026 Motriz · Gestão de oficinas</p>
       </section>
 
       {/* Formulário */}
@@ -98,7 +98,7 @@ export default function Entrar() {
 
           <h2 className="text-2xl font-bold tracking-tight">Entrar no painel</h2>
           <p className="mt-1.5 text-sm text-ink-soft">
-            Escolha como quer se identificar. Os dois caminhos passam pelo gateway.
+            Acesse com seu CPF. Clientes acompanham seus veículos; a equipe gerencia a oficina.
           </p>
 
           <div className="mt-7 grid grid-cols-2 gap-1 rounded-xl border border-line bg-panel p-1">
@@ -111,15 +111,15 @@ export default function Entrar() {
                   aba === v ? 'bg-brand text-white shadow-lg shadow-brand/20' : 'text-ink-soft hover:text-ink',
                 ].join(' ')}
               >
-                {v === 'cliente' ? 'Cliente' : 'Funcionário'}
+                {v === 'cliente' ? 'Sou cliente' : 'Sou da equipe'}
               </button>
             ))}
           </div>
 
           <p className="mt-3 text-xs leading-relaxed text-ink-mute">
             {aba === 'cliente'
-              ? 'O CPF vai para a Azure Function, que confirma o cliente na base e devolve o token.'
-              : 'CPF e senha vão para a API no cluster, que devolve o token do funcionário.'}
+              ? 'Informe o CPF cadastrado na oficina para acompanhar seus veículos e orçamentos.'
+              : 'Use seu CPF e a senha fornecida pela oficina.'}
           </p>
 
           <form onSubmit={enviar} className="mt-6 space-y-4">
@@ -164,11 +164,11 @@ export default function Entrar() {
           </form>
 
           <div className="mt-6 rounded-xl border border-line bg-panel/60 px-4 py-3">
-            <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-mute">Dados de demonstração</p>
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-mute">Ambiente de demonstração</p>
             <p className="mt-2 font-mono text-[11px] leading-relaxed text-ink-soft">
               cliente · 987.654.321-00
               <br />
-              funcionário · 111.111.111-11 · {SENHA_DEMO}
+              equipe · 111.111.111-11 · {SENHA_DEMO}
             </p>
           </div>
         </div>

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { aoChamar, API_BASE } from '../lib/api';
+import { aoChamar } from '../lib/api';
 import type { Chamada } from '../lib/api';
 import { IconeRede } from './Icones';
 
@@ -12,12 +12,12 @@ function corDoStatus(s: number) {
 }
 
 /**
- * Inspetor de requisições.
+ * Painel de atividade.
  *
- * Existe para tornar visível o que normalmente fica escondido: toda chamada sai
- * com um X-Correlation-ID, atravessa o APIM e volta com o mesmo ID — que é o
- * mesmo valor procurável nos logs do Datadog. É a ponte entre a tela e a
- * observabilidade.
+ * Mostra as chamadas recentes com status, tempo e o identificador da
+ * requisicao. O identificador e o mesmo que acompanha a requisicao no servidor,
+ * entao ele e o que o suporte pede quando algo da errado — e, nos bastidores, o
+ * que liga esta tela ao log correspondente.
  */
 export default function Inspetor() {
   const [chamadas, setChamadas] = useState<Chamada[]>([]);
@@ -34,8 +34,8 @@ export default function Inspetor() {
         <div className="card mb-2 max-h-[60vh] animate-rise overflow-hidden">
           <div className="flex items-center justify-between border-b border-line px-4 py-3">
             <div>
-              <p className="text-sm font-semibold">Inspetor de requisições</p>
-              <p className="font-mono text-[11px] text-ink-mute">{API_BASE.replace('https://', '')}</p>
+              <p className="text-sm font-semibold">Atividade recente</p>
+              <p className="text-[11px] text-ink-mute">Últimas operações desta sessão</p>
             </div>
             <button onClick={() => setAberto(false)} className="text-xs text-ink-mute hover:text-ink">
               fechar
@@ -67,9 +67,9 @@ export default function Inspetor() {
                       setTimeout(() => setCopiado(null), 1600);
                     }}
                     className="mt-1.5 block w-full truncate text-left font-mono text-[10px] text-ink-mute transition-colors hover:text-brand"
-                    title="Copiar o correlation ID para buscar no Datadog"
+                    title="Copiar o identificador desta requisição"
                   >
-                    {copiado === c.correlationId ? '✓ copiado — busque no Datadog' : `cid ${c.correlationId}`}
+                    {copiado === c.correlationId ? '✓ identificador copiado' : `id ${c.correlationId}`}
                   </button>
                 )}
               </div>
@@ -83,7 +83,7 @@ export default function Inspetor() {
         className="card ml-auto flex items-center gap-2.5 px-4 py-2.5 text-xs font-semibold shadow-2xl transition-transform hover:scale-[1.02]"
       >
         <IconeRede className="h-4 w-4 text-brand" />
-        <span>Gateway</span>
+        <span>Atividade</span>
         {ultima && (
           <span
             className="rounded px-1.5 py-0.5 font-mono text-[10px] font-bold"

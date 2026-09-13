@@ -77,7 +77,7 @@ async function requisicao<T>(
       body: corpo === undefined ? undefined : JSON.stringify(corpo),
     });
   } catch {
-    throw new ErroApi(0, 'Não foi possível falar com o gateway. Verifique a conexão.', correlationId);
+    throw new ErroApi(0, 'Não foi possível conectar ao servidor. Verifique sua conexão.', correlationId);
   }
 
   const ms = Math.round(performance.now() - inicio);
@@ -120,8 +120,8 @@ function mensagemDeErro(status: number, dados: unknown): string {
   if (status === 401) return 'Sessão expirada ou token inválido. Entre novamente.';
   if (status === 403) return 'Sem permissão para esta operação.';
   if (status === 404) return 'Recurso não encontrado.';
-  if (status === 429) return 'Muitas requisições — o rate limit do gateway entrou em ação.';
-  if (status >= 500) return 'A API respondeu com erro interno.';
+  if (status === 429) return 'Muitas tentativas em pouco tempo. Aguarde alguns instantes.';
+  if (status >= 500) return 'O servidor encontrou um erro. Tente novamente em instantes.';
   return `A requisição falhou (HTTP ${status}).`;
 }
 
