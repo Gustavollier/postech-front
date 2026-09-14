@@ -688,7 +688,8 @@ function ModalExcluirOrdem({
   return (
     <Confirmacao
       titulo={`Excluir a ordem #${idOS}`}
-      descricao="Os itens e o orçamento lançados nela vão junto. Não dá para desfazer."
+      tom="excluir"
+      descricao="Os itens, o orçamento e o histórico de status lançados nela vão junto."
       aberto={aberto}
       ocupado={ocupado}
       erro={erro}
@@ -870,6 +871,7 @@ function ModalRemoverItem({
           ? `${ehPecaItem(item) ? 'A peça' : 'A mão de obra'} sai da ordem. O orçamento precisa ser recalculado depois.`
           : ''
       }
+      tom="excluir"
       rotuloAcao="Remover"
       aberto={item !== null}
       ocupado={ocupado}

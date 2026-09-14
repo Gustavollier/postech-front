@@ -107,7 +107,7 @@ export default function Pecas() {
                               </button>
                               <button
                                 onClick={() => setExclusao(p)}
-                                className="btn-ghost px-2 py-1 text-[11px] text-[#e66767] hover:border-[#e66767]/60"
+                                className="btn-ghost px-2 py-1 text-[11px] text-[#c98500] hover:border-[#c98500]/60"
                               >
                                 desativar
                               </button>
@@ -464,8 +464,8 @@ function ModalExcluirPeca({
   return (
     <Confirmacao
       titulo="Desativar peça"
-      descricao={peca ? `${texto(peca, 'nome', 'Nome')} sai do catálogo e deixa de aparecer no lançamento de itens. O cadastro continua no banco.` : ''}
-      rotuloAcao="Desativar"
+      descricao={peca ? `${texto(peca, 'nome', 'Nome')} sai do catálogo e deixa de aparecer no lançamento de itens.` : ''}
+      tom="desativar"
       aberto={peca !== null}
       ocupado={ocupado}
       erro={erro}

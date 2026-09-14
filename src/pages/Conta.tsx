@@ -27,10 +27,10 @@ function Permissoes() {
     : [
         ['Abrir ordem e mover pelo fluxo', true],
         ['Lancar peca e mao de obra, calcular e enviar orcamento', true],
-        ['Cadastrar cliente, veiculo, peca e consultar a equipe', true],
-        ['Editar e desativar cliente e peca', gerente],
-        ['Editar veiculo, item e reatribuir ordem', gerente],
-        ['Cadastrar, editar e remover funcionario', gerente],
+        ['Cadastrar cliente, veiculo e peca', true],
+        ['Consultar clientes, equipe e catalogo', true],
+        ['Editar e desativar cliente, peca e funcionario', gerente],
+        ['Cadastrar funcionario, reatribuir e excluir ordem', gerente],
       ];
 
   return (

@@ -212,7 +212,7 @@ export default function Clientes() {
                   </button>
                   <button
                     onClick={() => setExclusao(c)}
-                    className="btn-ghost px-3 py-1.5 text-xs text-[#e66767] hover:border-[#e66767]/60"
+                    className="btn-ghost px-3 py-1.5 text-xs text-[#c98500] hover:border-[#c98500]/60"
                   >
                     Desativar
                   </button>
@@ -576,10 +576,10 @@ function ModalExcluirCliente({
       titulo="Desativar cliente"
       descricao={
         cliente
-          ? `${texto(cliente, 'nomeCompleto', 'NomeCompleto', 'nome')} deixa de aparecer nas listagens e nao consegue mais entrar. O cadastro continua no banco e as ordens dele seguem no historico — da para reativar direto na base.`
+          ? `${texto(cliente, 'nomeCompleto', 'NomeCompleto', 'nome')} sai das listagens e não consegue mais entrar pelo CPF. As ordens dele seguem no histórico.`
           : ''
       }
-      rotuloAcao="Desativar"
+      tom="desativar"
       aberto={cliente !== null}
       ocupado={ocupado}
       erro={erro}

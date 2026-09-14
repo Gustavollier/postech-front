@@ -177,9 +177,9 @@ export default function Funcionarios() {
                     </button>
                     <button
                       onClick={() => setExclusao(f)}
-                      className="btn-ghost px-3 py-1.5 text-xs text-[#e66767] hover:border-[#e66767]/60"
+                      className="btn-ghost px-3 py-1.5 text-xs text-[#c98500] hover:border-[#c98500]/60"
                     >
-                      Excluir
+                      Desativar
                     </button>
                   </>
                 )}
@@ -217,7 +217,7 @@ export default function Funcionarios() {
         aoFechar={() => setExclusao(null)}
         aoExcluir={() => {
           setExclusao(null);
-          setAviso({ tipo: 'ok', texto: 'Funcionário removido da equipe.' });
+          setAviso({ tipo: 'ok', texto: 'Funcionário desativado. Ele não entra mais no painel.' });
           void recarregar();
           limparBusca();
         }}
@@ -384,10 +384,11 @@ function ModalExcluir({
 
   return (
     <Confirmacao
-      titulo="Excluir funcionário"
+      titulo="Desativar funcionário"
+      tom="desativar"
       descricao={
         funcionario
-          ? `${texto(funcionario, 'nome', 'Nome')} sai do banco de vez — aqui nao e desativacao como em cliente e peca. Na base atual isso so passa para quem nao tem login nem historico, o que na pratica nao acontece: o login e criado junto com o cadastro.`
+          ? `${texto(funcionario, 'nome', 'Nome')} perde o acesso ao painel e deixa de aparecer como responsável em novas ordens. As ordens que ele já atendeu seguem no histórico, com o nome dele.`
           : ''
       }
       aberto={funcionario !== null}

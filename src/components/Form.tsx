@@ -133,15 +133,25 @@ export function Aviso({ tipo, texto }: { tipo: 'erro' | 'ok'; texto: string }) {
 }
 
 /**
- * Confirmação de ação destrutiva.
+ * Confirmação das duas ações que tiram algo da tela.
  *
- * Um `confirm()` do navegador quebraria o visual e não deixa nomear o que vai
- * sumir. Aqui a pergunta diz exatamente qual registro está em jogo.
+ * Elas não são a mesma coisa, e a tela tratava as duas igual:
+ *
+ *   desativar  cliente, peça e funcionário — a API marca Ativo = 0 e toda
+ *              consulta filtra Ativo = 1. O registro some das listagens e
+ *              perde o acesso, mas continua no banco com o histórico.
+ *   excluir    ordem e item — é DELETE de verdade. A ordem leva junto
+ *              orçamento, status e itens.
+ *
+ * O tom carrega essa diferença: âmbar para o que é reversível na base,
+ * vermelho para o que some. A frase do rodapé vem junto do tom, e não de cada
+ * chamada, para as três telas não contarem a mesma regra de três jeitos.
  */
 export function Confirmacao({
   titulo,
   descricao,
-  rotuloAcao = 'Excluir',
+  tom = 'excluir',
+  rotuloAcao,
   aberto,
   ocupado,
   erro,
@@ -150,6 +160,7 @@ export function Confirmacao({
 }: {
   titulo: string;
   descricao: string;
+  tom?: 'desativar' | 'excluir';
   rotuloAcao?: string;
   aberto: boolean;
   ocupado?: boolean;
@@ -157,10 +168,24 @@ export function Confirmacao({
   aoFechar: () => void;
   aoConfirmar: () => void;
 }) {
+  const desativa = tom === 'desativar';
+  const cor = desativa ? '#b07203' : '#c0392f';
+  const rotulo = rotuloAcao ?? (desativa ? 'Desativar' : 'Excluir');
+
   return (
     <Modal titulo={titulo} descricao={descricao} aberto={aberto} aoFechar={aoFechar}>
       <div className="space-y-4">
+        <p
+          className="rounded-xl px-3.5 py-2.5 text-xs leading-relaxed"
+          style={{ background: `${cor}14`, color: cor, boxShadow: `inset 0 0 0 1px ${cor}33` }}
+        >
+          {desativa
+            ? 'Desativar não apaga. O cadastro e o histórico continuam no banco — some das listagens e perde o acesso, e dá para reativar direto na base.'
+            : 'Isso apaga o registro de vez, e não dá para desfazer pela tela.'}
+        </p>
+
         {erro && <Aviso tipo="erro" texto={erro} />}
+
         <div className="flex gap-2">
           <button type="button" onClick={aoFechar} className="btn-ghost flex-1">
             Cancelar
@@ -169,9 +194,10 @@ export function Confirmacao({
             type="button"
             onClick={aoConfirmar}
             disabled={ocupado}
-            className="btn flex-1 bg-[#c0392f] text-white hover:bg-[#a8322a] active:scale-[.98]"
+            className="btn flex-1 text-white active:scale-[.98]"
+            style={{ background: cor }}
           >
-            {ocupado ? 'Removendo…' : rotuloAcao}
+            {ocupado ? 'Aplicando…' : rotulo}
           </button>
         </div>
       </div>
