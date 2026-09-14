@@ -66,8 +66,11 @@ O `base` do Vite é `/postech-front/`, que é o caminho onde o Pages serve o sit
 
 | Perfil | CPF | Senha |
 |---|---|---|
-| Cliente | `98765432100` | — |
-| Funcionário (gerente) | `11111111111` | `Senha@123` |
+| Cliente | `98765432100` | não se aplica — o acesso do cliente é só por CPF |
+| Funcionário (gerente) | `11144477735` | fornecida à parte |
+
+A senha da equipe não fica versionada: este repositório é público, e um literal
+aqui é uma credencial de produção publicada.
 
 O CPF `12345678901`, também presente no seed, tem dígito verificador inválido de propósito — serve para demonstrar a rejeição com HTTP 400.
 
