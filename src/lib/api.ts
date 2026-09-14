@@ -211,9 +211,8 @@ export const api = {
   atualizarOrdem: (id: number, c: { idCliente: number; idVeiculo: number; idFuncionario: number }) =>
     requisicao<unknown>('PUT', `/api/v1/ordens-servico/${id}`, c),
   excluirOrdem: (id: number) => requisicao<unknown>('DELETE', `/api/v1/ordens-servico/${id}`),
-  /** Histórico de status da ordem. Rota pública: é o acompanhamento por link. */
-  statusDaOrdem: (id: number) =>
-    requisicao<Registro>('GET', `/api/v1/ordens-servico/${id}/status`, undefined, { semAuth: true }),
+  /** Histórico de status. Deixou de ser público: agora exige token e posse. */
+  statusDaOrdem: (id: number) => requisicao<Registro>('GET', `/api/v1/ordens-servico/${id}/status`),
 
   // --- Itens da ordem: mão de obra (0) e peça (1) --------------------------
   itens: (idOS: number) => requisicao<unknown>('GET', `/api/v1/ordens-servico/${idOS}/itens`),
