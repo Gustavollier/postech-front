@@ -77,3 +77,18 @@ export function indexar(lista: Registro[]): Map<number, Registro> {
   }
   return m;
 }
+
+/**
+ * Status pelo nome que a API devolve.
+ *
+ * O histórico serializa o enum pelo nome em PascalCase e sem acento
+ * ("EmDiagnostico"), enquanto aqui o rótulo é escrito para leitura
+ * ("Em diagnóstico"). Comparar direto nunca casava: saía o nome cru na tela e a
+ * bolinha cinza de status desconhecido.
+ */
+export function statusPorNome(nome: string) {
+  const chave = (v: string) =>
+    v.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, '').toLowerCase();
+  const alvo = chave(nome);
+  return STATUS.find((s) => chave(s.nome) === alvo) ?? { id: -1, nome, cor: '#6b7482' };
+}

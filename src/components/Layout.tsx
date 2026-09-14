@@ -49,13 +49,21 @@ export default function Layout() {
         </nav>
 
         <div className="mt-auto space-y-3">
-          <div className="rounded-xl border border-line bg-raised/60 p-3">
+          <NavLink
+            to="/conta"
+            className={({ isActive }) =>
+              [
+                'block rounded-xl border p-3 transition-colors',
+                isActive ? 'border-brand/60 bg-brand/8' : 'border-line bg-raised/60 hover:border-ink-mute/50',
+              ].join(' ')
+            }
+          >
             <p className="truncate text-sm font-semibold">{sessao?.nome}</p>
             <p className="truncate text-xs text-ink-mute">{sessao?.detalhe}</p>
             <span className="mt-2 inline-block rounded-full bg-brand/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-brand">
               {sessao?.tipo === 'cliente' ? 'Cliente' : 'Equipe'}
             </span>
-          </div>
+          </NavLink>
           <button
             onClick={() => {
               sair();

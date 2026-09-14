@@ -123,3 +123,15 @@ export function useAuth() {
   if (!c) throw new Error('useAuth precisa estar dentro de ProvedorAuth');
   return c;
 }
+
+/**
+ * Cargo com poder de escrita administrativa.
+ *
+ * Editar e excluir cliente, peça, veículo, item e ordem, e mexer no cadastro da
+ * equipe, são [Authorize(Roles = "Gerente")] na API. Esconder o botão para os
+ * outros cargos não é a regra — a regra está no servidor —, é não oferecer um
+ * caminho que termina em 403.
+ */
+export function ehGerente(sessao: Sessao | null | undefined): boolean {
+  return sessao?.tipo === 'funcionario' && sessao.detalhe === 'Gerente';
+}

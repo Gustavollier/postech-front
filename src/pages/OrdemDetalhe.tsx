@@ -1,14 +1,14 @@
 import { useCallback, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, comoLista, ErroApi } from '../lib/api';
 import { useDados } from '../lib/useDados';
-import { useAuth } from '../lib/auth';
+import { ehGerente, useAuth } from '../lib/auth';
 import { useCatalogos, useRotulosOrdem } from '../lib/useCatalogos';
-import { ehPecaItem, moeda, numero, statusPorId, texto } from '../lib/types';
+import { dataCurta, ehPecaItem, moeda, numero, statusPorId, statusPorNome, texto } from '../lib/types';
 import type { Registro } from '../lib/types';
 import { Cabecalho } from '../components/Layout';
 import { Erro, Esqueleto, Selo, Vazio } from '../components/Base';
-import { Aviso, Campo, Modal, Selecao } from '../components/Form';
+import { Aviso, Campo, Confirmacao, Modal, Selecao } from '../components/Form';
 import { IconeAtualizar } from '../components/Icones';
 
 /** Status do orçamento, no mesmo enum da API. */
@@ -23,10 +23,17 @@ export default function OrdemDetalhe() {
   const idOS = Number(id);
   const { sessao } = useAuth();
   const ehCliente = sessao?.tipo === 'cliente';
+  const gerente = ehGerente(sessao);
+  const navegar = useNavigate();
 
   const [aviso, setAviso] = useState<{ tipo: 'erro' | 'ok'; texto: string } | null>(null);
   const [ocupado, setOcupado] = useState(false);
   const [modalItem, setModalItem] = useState(false);
+  const [itemEmEdicao, setItemEmEdicao] = useState<Registro | null>(null);
+  const [itemParaRemover, setItemParaRemover] = useState<Registro | null>(null);
+  const [itemAberto, setItemAberto] = useState<number | null>(null);
+  const [editandoOrdem, setEditandoOrdem] = useState(false);
+  const [excluindoOrdem, setExcluindoOrdem] = useState(false);
 
   const ordem = useDados<Registro>(() => api.ordem(idOS), [idOS]);
   const itens = useDados<Registro[]>(async () => comoLista(await api.itens(idOS)), [idOS]);
@@ -36,6 +43,12 @@ export default function OrdemDetalhe() {
     [idOS],
   );
 
+  // O total vem da rota de valor da API, e nao de uma soma feita aqui: quem
+  // sabe somar item e orcamento e o dominio.
+  const valor = useDados<Registro | null>(async () => api.valorDaOrdem(idOS).catch(() => null), [idOS]);
+  // Historico de status: rota publica, e o acompanhamento por link.
+  const historico = useDados<Registro | null>(async () => api.statusDaOrdem(idOS).catch(() => null), [idOS]);
+
   const catalogos = useCatalogos();
   const rotulo = useRotulosOrdem(ordem.dados ? [ordem.dados] : []);
 
@@ -43,7 +56,9 @@ export default function OrdemDetalhe() {
     void ordem.recarregar();
     void itens.recarregar();
     void orcamento.recarregar();
-  }, [ordem, itens, orcamento]);
+    void valor.recarregar();
+    void historico.recarregar();
+  }, [ordem, itens, orcamento, valor, historico]);
 
   async function executar(acao: () => Promise<unknown>, sucesso: string) {
     setOcupado(true);
@@ -102,7 +117,15 @@ export default function OrdemDetalhe() {
                   {ehCliente ? '' : `Responsável: ${rotulo.responsavel(o)}`}
                 </p>
               </div>
-              <Selo status={status} />
+              <div className="flex items-center gap-3">
+                {valor.dados && (
+                  <div className="text-right">
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-ink-mute">Valor da ordem</p>
+                    <p className="text-lg font-bold tabular-nums">{moeda(numero(valor.dados, 'valor', 'Valor'))}</p>
+                  </div>
+                )}
+                <Selo status={status} />
+              </div>
             </div>
 
             <div className="mt-4 flex gap-[2px]">
@@ -116,20 +139,35 @@ export default function OrdemDetalhe() {
               ))}
             </div>
 
-            {!ehCliente && proximo && (
-              <button
-                onClick={() =>
-                  executar(
-                    () => api.atualizarStatus(idOS, numero(o, 'idFuncionario', 'funcionarioId') ?? 1, status + 1),
-                    `Ordem movida para ${proximo.nome}.`,
-                  )
-                }
-                disabled={ocupado}
-                className="btn-primary mt-4 w-full sm:w-auto"
-              >
-                Avançar para {proximo.nome}
-              </button>
-            )}
+            <div className="mt-4 flex flex-wrap gap-2">
+              {!ehCliente && proximo && (
+                <button
+                  onClick={() =>
+                    executar(
+                      () => api.atualizarStatus(idOS, numero(o, 'idFuncionario', 'funcionarioId') ?? 1, status + 1),
+                      `Ordem movida para ${proximo.nome}.`,
+                    )
+                  }
+                  disabled={ocupado}
+                  className="btn-primary"
+                >
+                  Avançar para {proximo.nome}
+                </button>
+              )}
+              {gerente && (
+                <>
+                  <button onClick={() => setEditandoOrdem(true)} className="btn-ghost">
+                    Reatribuir
+                  </button>
+                  <button
+                    onClick={() => setExcluindoOrdem(true)}
+                    className="btn-ghost text-[#e66767] hover:border-[#e66767]/60"
+                  >
+                    Excluir ordem
+                  </button>
+                </>
+              )}
+            </div>
           </section>
 
           {/* ---------------- Itens ---------------- */}
@@ -186,10 +224,67 @@ export default function OrdemDetalhe() {
                         ? `×${texto(it, 'quantidadeItem', 'QuantidadeItem')}`
                         : `${texto(it, 'quantidadeItem', 'QuantidadeItem')} h`}
                     </span>
+                    {!ehCliente && (
+                      <button
+                        onClick={() => setItemAberto(numero(it, 'id', 'Id'))}
+                        className="btn-ghost px-2 py-1 text-[11px]"
+                      >
+                        ver
+                      </button>
+                    )}
+                    {gerente && (
+                      <>
+                        <button onClick={() => setItemEmEdicao(it)} className="btn-ghost px-2 py-1 text-[11px]">
+                          editar
+                        </button>
+                        <button
+                          onClick={() => setItemParaRemover(it)}
+                          className="btn-ghost px-2 py-1 text-[11px] text-[#e66767] hover:border-[#e66767]/60"
+                        >
+                          remover
+                        </button>
+                      </>
+                    )}
                   </div>
                 );
               })}
             </div>
+          </section>
+
+          {/* ---------------- Histórico ---------------- */}
+          <section className="card mb-5 p-5">
+            <div className="mb-3 flex items-baseline justify-between gap-3">
+              <h2 className="text-sm font-semibold">Histórico de status</h2>
+              <span className="text-xs text-ink-mute">
+                {historico.dados ? statusPorNome(texto(historico.dados, 'statusAtual', 'StatusAtual')).nome : '—'}
+              </span>
+            </div>
+
+            {historico.carregando && <Esqueleto linhas={2} />}
+            {!historico.carregando && !historico.dados && (
+              <p className="text-sm text-ink-soft">Sem histórico registrado para esta ordem.</p>
+            )}
+
+            <ol className="space-y-0">
+              {comoLista(historico.dados?.historico ?? historico.dados?.Historico ?? []).map((h, i, todos) => {
+                const st = statusPorNome(texto(h, 'statusAtual', 'StatusAtual'));
+                return (
+                  <li key={numero(h, 'id', 'Id') ?? i} className="flex gap-3">
+                    <div className="flex flex-col items-center">
+                      <span className="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: st.cor }} />
+                      {i < todos.length - 1 && <span className="w-px flex-1 bg-line" />}
+                    </div>
+                    <div className="min-w-0 flex-1 pb-4">
+                      <p className="text-sm font-medium">{st.nome}</p>
+                      <p className="text-xs text-ink-mute">
+                        {dataCurta(texto(h, 'updatedAt', 'UpdatedAt'))} · por{' '}
+                        {catalogos.nomeFuncionario(numero(h, 'idFuncionario', 'IdFuncionario'))}
+                      </p>
+                    </div>
+                  </li>
+                );
+              })}
+            </ol>
           </section>
 
           {/* ---------------- Orçamento ---------------- */}
@@ -273,6 +368,49 @@ export default function OrdemDetalhe() {
               )}
             </div>
           </section>
+
+          <ModalOrdem
+            aberto={editandoOrdem}
+            ordem={o}
+            idOS={idOS}
+            aoFechar={() => setEditandoOrdem(false)}
+            aoSalvar={() => {
+              setEditandoOrdem(false);
+              setAviso({ tipo: 'ok', texto: 'Ordem reatribuída.' });
+              recarregarTudo();
+            }}
+          />
+
+          <ModalExcluirOrdem
+            aberto={excluindoOrdem}
+            idOS={idOS}
+            aoFechar={() => setExcluindoOrdem(false)}
+            aoExcluir={() => navegar('/ordens')}
+          />
+
+          <ModalDetalheItem idOS={idOS} id={itemAberto} aoFechar={() => setItemAberto(null)} />
+
+          <ModalEditarItem
+            idOS={idOS}
+            item={itemEmEdicao}
+            aoFechar={() => setItemEmEdicao(null)}
+            aoSalvar={() => {
+              setItemEmEdicao(null);
+              setAviso({ tipo: 'ok', texto: 'Item atualizado. Recalcule o orçamento para refletir o novo valor.' });
+              recarregarTudo();
+            }}
+          />
+
+          <ModalRemoverItem
+            idOS={idOS}
+            item={itemParaRemover}
+            aoFechar={() => setItemParaRemover(null)}
+            aoRemover={() => {
+              setItemParaRemover(null);
+              setAviso({ tipo: 'ok', texto: 'Item removido. Recalcule o orçamento.' });
+              recarregarTudo();
+            }}
+          />
 
           {!ehCliente && (
             <ModalItem
@@ -398,5 +536,346 @@ function ModalItem({
         </div>
       </form>
     </Modal>
+  );
+}
+
+/** Reatribuição: troca cliente, veículo e responsável da ordem já aberta. */
+function ModalOrdem({
+  aberto,
+  ordem,
+  idOS,
+  aoFechar,
+  aoSalvar,
+}: {
+  aberto: boolean;
+  ordem: Registro;
+  idOS: number;
+  aoFechar: () => void;
+  aoSalvar: () => void;
+}) {
+  const [cliente, setCliente] = useState('');
+  const [veiculo, setVeiculo] = useState('');
+  const [funcionario, setFuncionario] = useState('');
+  const [erro, setErro] = useState<string | null>(null);
+  const [salvando, setSalvando] = useState(false);
+  const [preenchido, setPreenchido] = useState(false);
+
+  if (aberto && !preenchido) {
+    setPreenchido(true);
+    setCliente(String(numero(ordem, 'idCliente', 'clienteId') ?? ''));
+    setVeiculo(String(numero(ordem, 'idVeiculo', 'veiculoId') ?? ''));
+    setFuncionario(String(numero(ordem, 'idFuncionario', 'funcionarioId') ?? ''));
+    setErro(null);
+  }
+  if (!aberto && preenchido) setPreenchido(false);
+
+  const clientes = useDados<Registro[]>(async () => (aberto ? comoLista(await api.clientes()) : []), [aberto]);
+  const funcionarios = useDados<Registro[]>(async () => (aberto ? comoLista(await api.funcionarios()) : []), [aberto]);
+  const veiculos = useDados<Registro[]>(
+    async () => (cliente ? comoLista(await api.veiculosDoCliente(Number(cliente))) : []),
+    [cliente],
+  );
+
+  async function salvar(e: React.FormEvent) {
+    e.preventDefault();
+    if (!cliente || !veiculo || !funcionario) return setErro('Selecione cliente, veículo e responsável.');
+
+    setErro(null);
+    setSalvando(true);
+    try {
+      await api.atualizarOrdem(idOS, {
+        idCliente: Number(cliente),
+        idVeiculo: Number(veiculo),
+        idFuncionario: Number(funcionario),
+      });
+      aoSalvar();
+    } catch (e2) {
+      setErro(e2 instanceof ErroApi ? e2.message : 'Não foi possível reatribuir a ordem.');
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  return (
+    <Modal
+      titulo="Reatribuir ordem"
+      descricao="Muda de quem é a ordem, qual carro e quem responde por ela. O status não muda aqui."
+      aberto={aberto}
+      aoFechar={aoFechar}
+    >
+      <form onSubmit={salvar} className="space-y-4">
+        <Campo rotulo="Cliente">
+          <Selecao
+            valor={cliente}
+            aoMudar={(v) => {
+              setCliente(v);
+              setVeiculo('');
+            }}
+            vazio="Selecione o cliente…"
+            opcoes={(clientes.dados ?? []).map((c) => ({
+              valor: String(numero(c, 'id', 'Id') ?? ''),
+              rotulo: texto(c, 'nomeCompleto', 'NomeCompleto', 'nome'),
+            }))}
+          />
+        </Campo>
+
+        <Campo rotulo="Veículo">
+          <Selecao
+            valor={veiculo}
+            aoMudar={setVeiculo}
+            vazio={cliente ? 'Selecione o veículo…' : 'Escolha o cliente primeiro'}
+            opcoes={(veiculos.dados ?? []).map((v) => ({
+              valor: String(numero(v, 'id', 'Id') ?? ''),
+              rotulo: `${texto(v, 'marca', 'Marca')} ${texto(v, 'modelo', 'Modelo')} · ${texto(v, 'placa', 'Placa')}`,
+            }))}
+          />
+        </Campo>
+
+        <Campo rotulo="Responsável">
+          <Selecao
+            valor={funcionario}
+            aoMudar={setFuncionario}
+            vazio="Selecione o responsável…"
+            opcoes={(funcionarios.dados ?? []).map((f) => ({
+              valor: String(numero(f, 'id', 'Id') ?? ''),
+              rotulo: `${texto(f, 'nome', 'Nome')} — ${texto(f, 'cargo', 'Cargo')}`,
+            }))}
+          />
+        </Campo>
+
+        {erro && <Aviso tipo="erro" texto={erro} />}
+
+        <div className="flex gap-2 pt-1">
+          <button type="button" onClick={aoFechar} className="btn-ghost flex-1">
+            Cancelar
+          </button>
+          <button type="submit" className="btn-primary flex-1" disabled={salvando}>
+            {salvando ? 'Salvando…' : 'Salvar'}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function ModalExcluirOrdem({
+  aberto,
+  idOS,
+  aoFechar,
+  aoExcluir,
+}: {
+  aberto: boolean;
+  idOS: number;
+  aoFechar: () => void;
+  aoExcluir: () => void;
+}) {
+  const [erro, setErro] = useState<string | null>(null);
+  const [ocupado, setOcupado] = useState(false);
+
+  async function confirmar() {
+    setErro(null);
+    setOcupado(true);
+    try {
+      await api.excluirOrdem(idOS);
+      aoExcluir();
+    } catch (e) {
+      setErro(e instanceof ErroApi ? e.message : 'Não foi possível excluir a ordem.');
+    } finally {
+      setOcupado(false);
+    }
+  }
+
+  return (
+    <Confirmacao
+      titulo={`Excluir a ordem #${idOS}`}
+      descricao="Os itens e o orçamento lançados nela vão junto. Não dá para desfazer."
+      aberto={aberto}
+      ocupado={ocupado}
+      erro={erro}
+      aoFechar={aoFechar}
+      aoConfirmar={confirmar}
+    />
+  );
+}
+
+/** Item carregado pela rota própria, e não reaproveitado da listagem. */
+function ModalDetalheItem({ idOS, id, aoFechar }: { idOS: number; id: number | null; aoFechar: () => void }) {
+  const { dados, erro, carregando } = useDados<Registro | null>(
+    async () => (id === null ? null : await api.item(idOS, id)),
+    [idOS, id],
+  );
+
+  return (
+    <Modal titulo="Item da ordem" descricao="Dados vindos da rota por id." aberto={id !== null} aoFechar={aoFechar}>
+      {carregando && <Esqueleto linhas={2} />}
+      {erro && <Aviso tipo="erro" texto={erro} />}
+      {dados && (
+        <dl className="space-y-2.5 text-sm">
+          {[
+            ['Tipo', ehPecaItem(dados) ? 'Peça' : 'Mão de obra'],
+            ['Quantidade', texto(dados, 'quantidadeItem', 'QuantidadeItem')],
+            ['Peça', texto(dados, 'idPeca', 'IdPeca')],
+            ['Funcionário', texto(dados, 'idFuncionario', 'IdFuncionario')],
+          ].map(([rotulo, valor]) => (
+            <div key={rotulo} className="flex justify-between gap-4 border-b border-line/60 pb-2 last:border-0">
+              <dt className="text-ink-mute">{rotulo}</dt>
+              <dd className="truncate font-medium">{valor}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+    </Modal>
+  );
+}
+
+function ModalEditarItem({
+  idOS,
+  item,
+  aoFechar,
+  aoSalvar,
+}: {
+  idOS: number;
+  item: Registro | null;
+  aoFechar: () => void;
+  aoSalvar: () => void;
+}) {
+  const [quantidade, setQuantidade] = useState('1');
+  const [referencia, setReferencia] = useState('');
+  const [erro, setErro] = useState<string | null>(null);
+  const [salvando, setSalvando] = useState(false);
+  const [carregado, setCarregado] = useState<number | null>(null);
+
+  const id = item ? numero(item, 'id', 'Id') : null;
+  const ehPeca = item ? ehPecaItem(item) : false;
+
+  if (item && id !== carregado) {
+    setCarregado(id);
+    setQuantidade(String(numero(item, 'quantidadeItem', 'QuantidadeItem') ?? 1));
+    setReferencia(String((ehPeca ? numero(item, 'idPeca', 'IdPeca') : numero(item, 'idFuncionario', 'IdFuncionario')) ?? ''));
+    setErro(null);
+  }
+
+  // O tipo do item não muda na edição: trocar peça por mão de obra é outro item.
+  const pecas = useDados<Registro[]>(async () => (item && ehPeca ? comoLista(await api.pecas()) : []), [item, ehPeca]);
+  const funcionarios = useDados<Registro[]>(
+    async () => (item && !ehPeca ? comoLista(await api.funcionarios()) : []),
+    [item, ehPeca],
+  );
+  const lista = ehPeca ? (pecas.dados ?? []) : (funcionarios.dados ?? []);
+
+  async function salvar(e: React.FormEvent) {
+    e.preventDefault();
+    if (id === null) return;
+    if (!referencia) return setErro(ehPeca ? 'Escolha a peça.' : 'Escolha o funcionário.');
+
+    setErro(null);
+    setSalvando(true);
+    try {
+      await api.atualizarItem(idOS, id, {
+        tipoItem: ehPeca ? 1 : 0,
+        quantidadeItem: Number(quantidade),
+        idPeca: ehPeca ? Number(referencia) : null,
+        idFuncionario: ehPeca ? null : Number(referencia),
+      });
+      aoSalvar();
+    } catch (e2) {
+      setErro(e2 instanceof ErroApi ? e2.message : 'Não foi possível salvar o item.');
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  return (
+    <Modal
+      titulo={ehPeca ? 'Editar peça lançada' : 'Editar mão de obra'}
+      descricao="O tipo do item não muda aqui — remova e lance de novo, se for o caso."
+      aberto={item !== null}
+      aoFechar={aoFechar}
+    >
+      <form onSubmit={salvar} className="space-y-4">
+        <Campo rotulo={ehPeca ? 'Peça' : 'Funcionário'}>
+          <Selecao
+            valor={referencia}
+            aoMudar={setReferencia}
+            vazio={ehPeca ? 'Selecione a peça…' : 'Selecione o funcionário…'}
+            opcoes={lista.map((r) => ({
+              valor: String(numero(r, 'id', 'Id') ?? ''),
+              rotulo: ehPeca
+                ? `${texto(r, 'nome', 'Nome')} — ${moeda(numero(r, 'preco', 'Preco'))}`
+                : `${texto(r, 'nome', 'Nome')} — ${texto(r, 'cargo', 'Cargo')}`,
+            }))}
+          />
+        </Campo>
+
+        <Campo rotulo={ehPeca ? 'Quantidade' : 'Horas'}>
+          <input
+            className="field"
+            type="number"
+            min="1"
+            value={quantidade}
+            onChange={(e) => setQuantidade(e.target.value)}
+            required
+          />
+        </Campo>
+
+        {erro && <Aviso tipo="erro" texto={erro} />}
+
+        <div className="flex gap-2 pt-1">
+          <button type="button" onClick={aoFechar} className="btn-ghost flex-1">
+            Cancelar
+          </button>
+          <button type="submit" className="btn-primary flex-1" disabled={salvando}>
+            {salvando ? 'Salvando…' : 'Salvar'}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function ModalRemoverItem({
+  idOS,
+  item,
+  aoFechar,
+  aoRemover,
+}: {
+  idOS: number;
+  item: Registro | null;
+  aoFechar: () => void;
+  aoRemover: () => void;
+}) {
+  const [erro, setErro] = useState<string | null>(null);
+  const [ocupado, setOcupado] = useState(false);
+
+  async function confirmar() {
+    const id = item ? numero(item, 'id', 'Id') : null;
+    if (id === null) return;
+    setErro(null);
+    setOcupado(true);
+    try {
+      await api.removerItem(idOS, id);
+      aoRemover();
+    } catch (e) {
+      setErro(e instanceof ErroApi ? e.message : 'Não foi possível remover o item.');
+    } finally {
+      setOcupado(false);
+    }
+  }
+
+  return (
+    <Confirmacao
+      titulo="Remover item"
+      descricao={
+        item
+          ? `${ehPecaItem(item) ? 'A peça' : 'A mão de obra'} sai da ordem. O orçamento precisa ser recalculado depois.`
+          : ''
+      }
+      rotuloAcao="Remover"
+      aberto={item !== null}
+      ocupado={ocupado}
+      erro={erro}
+      aoFechar={aoFechar}
+      aoConfirmar={confirmar}
+    />
   );
 }

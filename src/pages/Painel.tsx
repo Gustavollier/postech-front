@@ -1,7 +1,10 @@
 import { Link } from 'react-router-dom';
+import { api, comoLista } from '../lib/api';
+import { useDados } from '../lib/useDados';
 import { useOrdens } from '../lib/useOrdens';
 import { useRotulosOrdem } from '../lib/useCatalogos';
 import { STATUS, numero, statusPorId } from '../lib/types';
+import type { Registro } from '../lib/types';
 import { Cabecalho } from '../components/Layout';
 import { Distribuicao, Erro, Esqueleto, Selo, Tile, Vazio } from '../components/Base';
 import { IconeAtualizar } from '../components/Icones';
@@ -11,9 +14,19 @@ export default function Painel() {
   const ordens = dados ?? [];
   const rotulo = useRotulosOrdem(ordens);
 
+  /**
+   * A distribuição vem da rota que a API já entrega ordenada por status. Para o
+   * cliente ela é 403 — rota da operação —, e aí a contagem sai das ordens dele.
+   */
+  const agrupadas = useDados<Registro[] | null>(
+    async () => (ehCliente ? null : comoLista(await api.ordensPorStatus())),
+    [ehCliente],
+  );
+
+  const base = agrupadas.dados ?? ordens;
   const porStatus = STATUS.map((s) => ({
     ...s,
-    valor: ordens.filter((o) => numero(o, 'status', 'Status') === s.id).length,
+    valor: base.filter((o) => numero(o, 'status', 'Status') === s.id).length,
   }));
 
   const abertas = ordens.filter((o) => {
@@ -57,7 +70,7 @@ export default function Painel() {
       <section className="card mt-6 p-5">
         <div className="mb-4 flex items-baseline justify-between">
           <h2 className="text-sm font-semibold">Distribuição por status</h2>
-          <span className="text-xs text-ink-mute">{ordens.length} ordens</span>
+          <span className="text-xs text-ink-mute">{base.length} ordens</span>
         </div>
 
         {carregando ? (

@@ -32,6 +32,13 @@ export type NovaPeca = {
   unidadeMedida: number;
   quantidadeEstoque: number;
 };
+/** O corpo de atualizacao nao leva CPF: ele identifica o funcionario na query. */
+export type EdicaoFuncionario = {
+  nome: string;
+  contato: string;
+  cargo: number;
+  valorHora: number;
+};
 export type NovoFuncionario = {
   nome: string;
   contato: string;
@@ -201,12 +208,21 @@ export const api = {
   atualizarStatus: (id: number, idFuncionario: number, status: number) =>
     requisicao<Registro>('PATCH', `/api/v1/ordens-servico/${id}/status`, { idFuncionario, status }),
 
+  atualizarOrdem: (id: number, c: { idCliente: number; idVeiculo: number; idFuncionario: number }) =>
+    requisicao<unknown>('PUT', `/api/v1/ordens-servico/${id}`, c),
   excluirOrdem: (id: number) => requisicao<unknown>('DELETE', `/api/v1/ordens-servico/${id}`),
+  /** Histórico de status da ordem. Rota pública: é o acompanhamento por link. */
+  statusDaOrdem: (id: number) =>
+    requisicao<Registro>('GET', `/api/v1/ordens-servico/${id}/status`, undefined, { semAuth: true }),
 
   // --- Itens da ordem: mão de obra (0) e peça (1) --------------------------
   itens: (idOS: number) => requisicao<unknown>('GET', `/api/v1/ordens-servico/${idOS}/itens`),
   adicionarItem: (idOS: number, item: ItemOS) =>
     requisicao<unknown>('POST', `/api/v1/ordens-servico/${idOS}/itens`, item),
+  item: (idOS: number, id: number) =>
+    requisicao<Registro>('GET', `/api/v1/ordens-servico/${idOS}/itens/${id}`),
+  atualizarItem: (idOS: number, id: number, item: ItemOS) =>
+    requisicao<unknown>('PUT', `/api/v1/ordens-servico/${idOS}/itens/${id}`, item),
   removerItem: (idOS: number, id: number) =>
     requisicao<unknown>('DELETE', `/api/v1/ordens-servico/${idOS}/itens/${id}`),
 
@@ -226,20 +242,50 @@ export const api = {
   // --- Clientes e veículos ------------------------------------------------
   clientes: () => requisicao<unknown>('GET', '/api/v1/clientes'),
   cliente: (id: number) => requisicao<Registro>('GET', `/api/v1/clientes/${id}`),
+  /** Busca pelo documento, com ou sem pontuação — a API espera só os dígitos. */
+  clientePorDocumento: (doc: string) =>
+    requisicao<Registro>('GET', `/api/v1/clientes/cpf-cnpj/${doc.replace(/\D/g, '')}`),
   criarCliente: (c: NovoCliente) => requisicao<unknown>('POST', '/api/v1/clientes', c),
+  atualizarCliente: (id: number, c: NovoCliente) =>
+    requisicao<unknown>('PUT', `/api/v1/clientes/${id}`, c),
+  excluirCliente: (id: number) => requisicao<unknown>('DELETE', `/api/v1/clientes/${id}`),
   veiculosDoCliente: (id: number) => requisicao<unknown>('GET', `/api/v1/clientes/${id}/veiculos`),
   criarVeiculo: (v: NovoVeiculo) => requisicao<unknown>('POST', '/api/v1/veiculos', v),
   veiculo: (id: number) => requisicao<Registro>('GET', `/api/v1/veiculos/${id}`),
+  veiculoPorPlaca: (placa: string) =>
+    requisicao<Registro>('GET', `/api/v1/veiculos/placa/${placa.toUpperCase().replace(/[^A-Z0-9]/g, '')}`),
+  atualizarVeiculo: (id: number, v: NovoVeiculo) =>
+    requisicao<unknown>('PUT', `/api/v1/veiculos/${id}`, v),
 
   // --- Peças --------------------------------------------------------------
   pecas: () => requisicao<unknown>('GET', '/api/v1/pecas'),
   criarPeca: (p: NovaPeca) => requisicao<unknown>('POST', '/api/v1/pecas', p),
+  atualizarPeca: (id: number, p: NovaPeca) => requisicao<unknown>('PUT', `/api/v1/pecas/${id}`, p),
+  excluirPeca: (id: number) => requisicao<unknown>('DELETE', `/api/v1/pecas/${id}`),
   ajustarEstoque: (id: number, quantidade: number) =>
     requisicao<unknown>('PATCH', `/api/v1/pecas/${id}/estoque`, { quantidade }),
 
   // --- Funcionários -------------------------------------------------------
   funcionarios: () => requisicao<unknown>('GET', '/api/v1/Funcionario'),
+  funcionario: (id: number) => requisicao<Registro>('GET', `/api/v1/Funcionario/${id}`),
+  funcionarioPorCpf: (cpf: string) =>
+    requisicao<Registro>('GET', `/api/v1/Funcionario/cpf?cpf=${encodeURIComponent(cpf.replace(/\D/g, ''))}`),
+  funcionarioPorNome: (nome: string) =>
+    requisicao<Registro>('GET', `/api/v1/Funcionario/nome?nome=${encodeURIComponent(nome)}`),
   criarFuncionario: (f: NovoFuncionario) => requisicao<unknown>('POST', '/api/v1/Funcionario', f),
+  /** CPF vai na query: é ele que identifica o funcionário, não um id de rota. */
+  atualizarFuncionario: (cpf: string, f: EdicaoFuncionario) =>
+    requisicao<unknown>('PUT', `/api/v1/Funcionario?cpf=${encodeURIComponent(cpf.replace(/\D/g, ''))}`, f),
+  excluirFuncionario: (cpf: string) =>
+    requisicao<unknown>('DELETE', `/api/v1/Funcionario?cpf=${encodeURIComponent(cpf.replace(/\D/g, ''))}`),
+
+  // --- Conta do funcionário logado ----------------------------------------
+  alterarSenha: (senhaAtual: string, novaSenha: string, confirmacaoSenha: string) =>
+    requisicao<unknown>('PATCH', '/api/v1/Autenticacao/alterar-senha', {
+      senhaAtual,
+      novaSenha,
+      confirmacaoSenha,
+    }),
 
   tempoMedio: () => requisicao<unknown>('GET', '/api/v1/monitoramento/tempo-execucao-medio'),
 

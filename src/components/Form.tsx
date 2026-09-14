@@ -131,3 +131,50 @@ export function Aviso({ tipo, texto }: { tipo: 'erro' | 'ok'; texto: string }) {
     </div>
   );
 }
+
+/**
+ * Confirmação de ação destrutiva.
+ *
+ * Um `confirm()` do navegador quebraria o visual e não deixa nomear o que vai
+ * sumir. Aqui a pergunta diz exatamente qual registro está em jogo.
+ */
+export function Confirmacao({
+  titulo,
+  descricao,
+  rotuloAcao = 'Excluir',
+  aberto,
+  ocupado,
+  erro,
+  aoFechar,
+  aoConfirmar,
+}: {
+  titulo: string;
+  descricao: string;
+  rotuloAcao?: string;
+  aberto: boolean;
+  ocupado?: boolean;
+  erro?: string | null;
+  aoFechar: () => void;
+  aoConfirmar: () => void;
+}) {
+  return (
+    <Modal titulo={titulo} descricao={descricao} aberto={aberto} aoFechar={aoFechar}>
+      <div className="space-y-4">
+        {erro && <Aviso tipo="erro" texto={erro} />}
+        <div className="flex gap-2">
+          <button type="button" onClick={aoFechar} className="btn-ghost flex-1">
+            Cancelar
+          </button>
+          <button
+            type="button"
+            onClick={aoConfirmar}
+            disabled={ocupado}
+            className="btn flex-1 bg-[#c0392f] text-white hover:bg-[#a8322a] active:scale-[.98]"
+          >
+            {ocupado ? 'Removendo…' : rotuloAcao}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
