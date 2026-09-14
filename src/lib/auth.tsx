@@ -31,21 +31,40 @@ function extrairToken(r: Registro): string {
   return t;
 }
 
-export function ProvedorAuth({ children }: { children: ReactNode }) {
-  const [sessao, setSessao] = useState<Sessao | null>(() => {
+/**
+ * Sessao lida no carregamento do modulo, antes de qualquer render.
+ *
+ * O token precisa estar no cliente HTTP antes da primeira requisicao, e um
+ * useEffect do provedor nao serve: no React, efeitos de filhos rodam ANTES dos
+ * efeitos do pai. O efeito que carrega os dados do painel disparava primeiro, e
+ * a primeira chamada saia sem o header Authorization — 401, que so sumia no
+ * recarregar seguinte. Resolver aqui, no topo do modulo, elimina a corrida.
+ */
+function sessaoArmazenada(): Sessao | null {
+  try {
     const bruto = localStorage.getItem(CHAVE);
     if (!bruto) return null;
-    try {
-      const s = JSON.parse(bruto) as Sessao;
-      if (s.expiraEm < Date.now()) return null;
-      return s;
-    } catch {
-      return null;
-    }
-  });
+    const s = JSON.parse(bruto) as Sessao;
+    return s.expiraEm > Date.now() ? s : null;
+  } catch {
+    return null;
+  }
+}
+
+const sessaoInicial = sessaoArmazenada();
+definirToken(sessaoInicial?.token ?? null);
+
+export function ProvedorAuth({ children }: { children: ReactNode }) {
+  const [sessao, setSessao] = useState<Sessao | null>(sessaoInicial);
+
+  // Declarado antes dos efeitos que o usam: trocar de sessao aplica o token no
+  // mesmo instante, sem depender da ordem em que os efeitos rodam.
+  const aplicarSessao = useCallback((nova: Sessao | null) => {
+    definirToken(nova?.token ?? null);
+    setSessao(nova);
+  }, []);
 
   useEffect(() => {
-    definirToken(sessao?.token ?? null);
     if (sessao) localStorage.setItem(CHAVE, JSON.stringify(sessao));
     else localStorage.removeItem(CHAVE);
   }, [sessao]);
@@ -54,10 +73,10 @@ export function ProvedorAuth({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!sessao) return;
     const resta = sessao.expiraEm - Date.now();
-    if (resta <= 0) return setSessao(null);
-    const t = setTimeout(() => setSessao(null), resta);
+    if (resta <= 0) return aplicarSessao(null);
+    const t = setTimeout(() => aplicarSessao(null), resta);
     return () => clearTimeout(t);
-  }, [sessao]);
+  }, [sessao, aplicarSessao]);
 
   const entrarComoCliente = useCallback(async (cpf: string) => {
     const r = await api.autenticarCliente(cpf.replace(/\D/g, ''));
@@ -65,7 +84,7 @@ export function ProvedorAuth({ children }: { children: ReactNode }) {
     const p = lerPayload(token);
     const segundos = typeof r.expires_in === 'number' ? r.expires_in : 900;
     const clienteId = Number(r.cliente_id ?? p.ClienteId ?? p.nameid ?? p.sub);
-    setSessao({
+    aplicarSessao({
       token,
       tipo: 'cliente',
       nome: String(r.nome ?? p.name ?? p.unique_name ?? 'Cliente'),
@@ -73,23 +92,23 @@ export function ProvedorAuth({ children }: { children: ReactNode }) {
       expiraEm: Date.now() + segundos * 1000,
       clienteId: Number.isFinite(clienteId) ? clienteId : undefined,
     });
-  }, []);
+  }, [aplicarSessao]);
 
   const entrarComoFuncionario = useCallback(async (cpf: string, senha: string) => {
     const r = await api.autenticarFuncionario(cpf.replace(/\D/g, ''), senha);
     const token = extrairToken(r);
     const p = lerPayload(token);
     const segundos = typeof r.expiresIn === 'number' ? r.expiresIn : 900;
-    setSessao({
+    aplicarSessao({
       token,
       tipo: 'funcionario',
       nome: String(p.name ?? p.unique_name ?? 'Funcionário'),
       detalhe: String(r.cargo ?? p.role ?? 'Equipe'),
       expiraEm: Date.now() + segundos * 1000,
     });
-  }, []);
+  }, [aplicarSessao]);
 
-  const sair = useCallback(() => setSessao(null), []);
+  const sair = useCallback(() => aplicarSessao(null), [aplicarSessao]);
 
   const valor = useMemo(
     () => ({ sessao, entrarComoCliente, entrarComoFuncionario, sair }),
