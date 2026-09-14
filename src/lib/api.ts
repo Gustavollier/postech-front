@@ -227,6 +227,7 @@ export const api = {
   criarCliente: (c: NovoCliente) => requisicao<unknown>('POST', '/api/v1/clientes', c),
   veiculosDoCliente: (id: number) => requisicao<unknown>('GET', `/api/v1/clientes/${id}/veiculos`),
   criarVeiculo: (v: NovoVeiculo) => requisicao<unknown>('POST', '/api/v1/veiculos', v),
+  veiculo: (id: number) => requisicao<Registro>('GET', `/api/v1/veiculos/${id}`),
 
   // --- Peças --------------------------------------------------------------
   pecas: () => requisicao<unknown>('GET', '/api/v1/pecas'),

@@ -5,7 +5,11 @@ export default {
     extend: {
       colors: {
         // Superfícies do painel, em escada: fundo, cartão, elevado.
-        base: '#0b0d10',
+        // 'fundo' e não 'base': uma cor chamada base faz o Tailwind gerar
+        // text-base como COR, e essa cor vence a utilidade de tamanho de mesmo
+        // nome. Títulos de modal e valores do orçamento saíam quase pretos
+        // sobre fundo escuro — invisíveis.
+        fundo: '#0b0d10',
         panel: '#12151a',
         raised: '#181c23',
         line: '#232935',

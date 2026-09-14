@@ -3,7 +3,8 @@ import { Link, useParams } from 'react-router-dom';
 import { api, comoLista, ErroApi } from '../lib/api';
 import { useDados } from '../lib/useDados';
 import { useAuth } from '../lib/auth';
-import { moeda, numero, statusPorId, texto } from '../lib/types';
+import { useCatalogos, useRotulosOrdem } from '../lib/useCatalogos';
+import { ehPecaItem, moeda, numero, statusPorId, texto } from '../lib/types';
 import type { Registro } from '../lib/types';
 import { Cabecalho } from '../components/Layout';
 import { Erro, Esqueleto, Selo, Vazio } from '../components/Base';
@@ -34,6 +35,9 @@ export default function OrdemDetalhe() {
     async () => api.orcamento(idOS).catch(() => null),
     [idOS],
   );
+
+  const catalogos = useCatalogos();
+  const rotulo = useRotulosOrdem(ordem.dados ? [ordem.dados] : []);
 
   const recarregarTudo = useCallback(() => {
     void ordem.recarregar();
@@ -93,13 +97,9 @@ export default function OrdemDetalhe() {
           <section className="card mb-5 p-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <p className="text-sm font-semibold">
-                  {ehCliente
-                    ? `Veículo ${texto(o, 'idVeiculo', 'veiculoId')}`
-                    : `Cliente ${texto(o, 'idCliente', 'clienteId')} · Veículo ${texto(o, 'idVeiculo', 'veiculoId')}`}
-                </p>
+                <p className="text-sm font-semibold">{rotulo.titulo(o)}</p>
                 <p className="mt-0.5 text-xs text-ink-mute">
-                  {ehCliente ? '' : `Responsável ${texto(o, 'idFuncionario', 'funcionarioId')}`}
+                  {ehCliente ? '' : `Responsável: ${rotulo.responsavel(o)}`}
                 </p>
               </div>
               <Selo status={status} />
@@ -157,8 +157,7 @@ export default function OrdemDetalhe() {
 
             <div className="space-y-2">
               {(itens.dados ?? []).map((it, i) => {
-                const tipo = numero(it, 'tipoItem', 'TipoItem');
-                const ehPeca = tipo === 1;
+                const ehPeca = ehPecaItem(it);
                 return (
                   <div key={numero(it, 'id', 'Id') ?? i} className="card flex items-center gap-3 px-4 py-3">
                     <span
@@ -171,12 +170,21 @@ export default function OrdemDetalhe() {
                       {ehPeca ? 'Peça' : 'Mão de obra'}
                     </span>
                     <span className="min-w-0 flex-1 truncate text-sm">
-                      {ehPeca
-                        ? `Peça ${texto(it, 'idPeca', 'IdPeca')}`
-                        : `Funcionário ${texto(it, 'idFuncionario', 'IdFuncionario')}`}
+                      {/* O catálogo de peças e a lista da equipe são da operação: o
+                          cliente recebe 403 neles. Para ele, um id cru na tela não
+                          diz nada — mostramos o que o item é, sem o id interno. */}
+                      {ehCliente
+                        ? ehPeca
+                          ? 'Peça aplicada no serviço'
+                          : 'Horas de serviço'
+                        : ehPeca
+                          ? catalogos.nomePeca(numero(it, 'idPeca', 'IdPeca'))
+                          : catalogos.nomeFuncionario(numero(it, 'idFuncionario', 'IdFuncionario'))}
                     </span>
                     <span className="text-sm font-semibold tabular-nums">
-                      ×{texto(it, 'quantidadeItem', 'QuantidadeItem')}
+                      {ehPeca
+                        ? `×${texto(it, 'quantidadeItem', 'QuantidadeItem')}`
+                        : `${texto(it, 'quantidadeItem', 'QuantidadeItem')} h`}
                     </span>
                   </div>
                 );

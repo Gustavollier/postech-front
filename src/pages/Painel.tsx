@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { useOrdens } from '../lib/useOrdens';
-import { STATUS, numero, statusPorId, texto } from '../lib/types';
+import { useRotulosOrdem } from '../lib/useCatalogos';
+import { STATUS, numero, statusPorId } from '../lib/types';
 import { Cabecalho } from '../components/Layout';
 import { Distribuicao, Erro, Esqueleto, Selo, Tile, Vazio } from '../components/Base';
 import { IconeAtualizar } from '../components/Icones';
@@ -8,6 +9,7 @@ import { IconeAtualizar } from '../components/Icones';
 export default function Painel() {
   const { dados, erro, carregando, recarregar, ehCliente } = useOrdens();
   const ordens = dados ?? [];
+  const rotulo = useRotulosOrdem(ordens);
 
   const porStatus = STATUS.map((s) => ({
     ...s,
@@ -109,13 +111,9 @@ export default function Painel() {
                   #{id ?? '?'}
                 </div>
                 <div className="min-w-[10rem] flex-1">
-                  <p className="truncate text-sm font-semibold">
-                    {ehCliente
-                      ? `Veículo ${texto(o, 'idVeiculo', 'veiculoId')}`
-                      : `Cliente ${texto(o, 'idCliente', 'clienteId')} · Veículo ${texto(o, 'idVeiculo', 'veiculoId')}`}
-                  </p>
+                  <p className="truncate text-sm font-semibold">{rotulo.titulo(o)}</p>
                   <p className="truncate text-xs text-ink-mute">
-                    {ehCliente ? `Ordem #${id ?? '—'}` : `Responsável ${texto(o, 'idFuncionario', 'funcionarioId')}`}
+                    {ehCliente ? `Ordem #${id ?? '—'}` : `Responsável: ${rotulo.responsavel(o)}`}
                   </p>
                 </div>
                 <Selo status={s} />

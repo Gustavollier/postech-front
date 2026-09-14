@@ -69,7 +69,7 @@ export default function Layout() {
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-30 flex items-center gap-3 border-b border-line bg-base/80 px-4 py-3 backdrop-blur-md lg:hidden">
+        <header className="sticky top-0 z-30 flex items-center gap-3 border-b border-line bg-fundo/80 px-4 py-3 backdrop-blur-md lg:hidden">
           <Marca compacta />
           <button onClick={sair} className="btn-ghost ml-auto px-3 py-1.5 text-xs">
             Sair

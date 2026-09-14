@@ -54,3 +54,26 @@ export function dataCurta(valor: string): string {
   if (Number.isNaN(d.getTime())) return valor;
   return d.toLocaleString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
 }
+
+/**
+ * O tipo do item chega como TEXTO ("MaoDeObra" / "Peca"), nao como numero: o
+ * response da API serializa o enum pelo nome. Ler como numero devolvia null e
+ * fazia toda peca aparecer como mao de obra.
+ *
+ * O numero e aceito como alternativa porque o corpo de escrita usa inteiro.
+ */
+export function ehPecaItem(item: Registro): boolean {
+  const v = item.tipoItem ?? item.TipoItem;
+  if (typeof v === 'string') return v.toLowerCase().startsWith('pec');
+  return v === 1;
+}
+
+/** Índice id -> registro, para trocar id por nome sem uma busca por item. */
+export function indexar(lista: Registro[]): Map<number, Registro> {
+  const m = new Map<number, Registro>();
+  for (const r of lista) {
+    const id = numero(r, 'id', 'Id');
+    if (id !== null) m.set(id, r);
+  }
+  return m;
+}

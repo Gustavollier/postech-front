@@ -4,6 +4,7 @@ import { api, comoLista, ErroApi } from '../lib/api';
 import { useOrdens } from '../lib/useOrdens';
 import { useDados } from '../lib/useDados';
 import { useAuth } from '../lib/auth';
+import { useRotulosOrdem } from '../lib/useCatalogos';
 import { STATUS, dataCurta, numero, statusPorId, texto } from '../lib/types';
 import type { Registro } from '../lib/types';
 import { Cabecalho } from '../components/Layout';
@@ -20,15 +21,19 @@ export default function Ordens() {
   const [aviso, setAviso] = useState<{ tipo: 'erro' | 'ok'; texto: string } | null>(null);
 
   const ordens = dados ?? [];
+  const rotulo = useRotulosOrdem(ordens);
 
   const visiveis = useMemo(() => {
     const q = busca.trim().toLowerCase();
     return ordens.filter((o) => {
       const s = numero(o, 'status', 'Status');
       if (filtro !== 'todos' && s !== filtro) return false;
-      return !q || JSON.stringify(o).toLowerCase().includes(q);
+      if (!q) return true;
+      // O nome do cliente e a placa não estão no JSON da ordem — só nos rótulos.
+      // Buscar apenas no JSON faria a busca ignorar justamente o que está na tela.
+      return `${rotulo.titulo(o)} ${rotulo.responsavel(o)} ${JSON.stringify(o)}`.toLowerCase().includes(q);
     });
-  }, [ordens, filtro, busca]);
+  }, [ordens, filtro, busca, rotulo]);
 
   return (
     <>
@@ -122,15 +127,11 @@ export default function Ordens() {
                 </div>
 
                 <div className="min-w-[11rem] flex-1">
-                  <p className="truncate text-sm font-semibold">
-                    {ehCliente
-                      ? `Veículo ${texto(o, 'idVeiculo', 'veiculoId')}`
-                      : `Cliente ${texto(o, 'idCliente', 'clienteId')} · Veículo ${texto(o, 'idVeiculo', 'veiculoId')}`}
-                  </p>
+                  <p className="truncate text-sm font-semibold">{rotulo.titulo(o)}</p>
                   <p className="mt-0.5 truncate text-xs text-ink-mute">
                     {ehCliente
                       ? `Aberta em ${dataCurta(texto(o, 'criadoEm', 'CriadoEm', 'createdAt'))}`
-                      : `Responsável ${texto(o, 'idFuncionario', 'funcionarioId')} · aberta em ${dataCurta(texto(o, 'criadoEm', 'CriadoEm', 'createdAt'))}`}
+                      : `${rotulo.responsavel(o)} · aberta em ${dataCurta(texto(o, 'criadoEm', 'CriadoEm', 'createdAt'))}`}
                   </p>
                 </div>
 
