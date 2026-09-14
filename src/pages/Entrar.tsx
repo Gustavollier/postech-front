@@ -6,7 +6,7 @@ import { Marca } from '../components/Layout';
 import { IconeEscudo, IconeOrdem, IconePeca } from '../components/Icones';
 
 const CPF_DEMO_CLIENTE = '98765432100';
-const CPF_DEMO_FUNCIONARIO = '11111111111';
+const CPF_DEMO_FUNCIONARIO = '11144477735';
 const SENHA_DEMO = 'Senha@123';
 
 function formatarCpf(v: string) {
@@ -168,7 +168,7 @@ export default function Entrar() {
             <p className="mt-2 font-mono text-[11px] leading-relaxed text-ink-soft">
               cliente · 987.654.321-00
               <br />
-              equipe · 111.111.111-11 · {SENHA_DEMO}
+              equipe · 111.444.777-35 · {SENHA_DEMO}
             </p>
           </div>
         </div>
