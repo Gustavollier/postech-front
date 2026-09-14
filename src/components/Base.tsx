@@ -28,16 +28,16 @@ export function Tile({
   carregando?: boolean;
 }) {
   return (
-    <div className="card group relative overflow-hidden p-5">
+    <div className="card group relative overflow-hidden p-4 sm:p-5">
       <div
         className="absolute inset-x-0 top-0 h-px opacity-70"
         style={{ background: `linear-gradient(90deg, transparent, ${cor}, transparent)` }}
       />
-      <p className="text-xs font-semibold uppercase tracking-wider text-ink-mute">{rotulo}</p>
+      <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-mute sm:text-xs">{rotulo}</p>
       {carregando ? (
         <div className="mt-3 h-9 w-20 animate-pulse rounded-lg bg-raised" />
       ) : (
-        <p className="mt-2 text-3xl font-bold tabular-nums tracking-tight">{valor}</p>
+        <p className="mt-1.5 text-2xl font-bold tabular-nums tracking-tight sm:mt-2 sm:text-3xl">{valor}</p>
       )}
       {apoio && <p className="mt-1 text-xs text-ink-soft">{apoio}</p>}
     </div>

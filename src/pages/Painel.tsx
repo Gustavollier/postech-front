@@ -38,7 +38,9 @@ export default function Painel() {
         }
       />
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      {/* Duas colunas ja no celular: empilhados, os quatro indicadores ocupavam
+          a tela inteira antes de qualquer conteudo. */}
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
         <Tile
           rotulo={ehCliente ? 'Minhas ordens' : 'Ordens no total'}
           valor={ordens.length}
@@ -101,17 +103,19 @@ export default function Painel() {
             const id = numero(o, 'id', 'Id');
             const s = numero(o, 'status', 'Status') ?? 0;
             return (
-              <div key={id ?? i} className="card flex items-center gap-4 px-4 py-3.5 transition-colors hover:border-ink-mute/40">
+              <div key={id ?? i} className="card flex flex-wrap items-center gap-3 px-4 py-3.5 transition-colors hover:border-ink-mute/40">
                 <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl font-mono text-xs font-bold"
                      style={{ background: `${statusPorId(s).cor}1a`, color: statusPorId(s).cor }}>
                   #{id ?? '?'}
                 </div>
-                <div className="min-w-0 flex-1">
+                <div className="min-w-[10rem] flex-1">
                   <p className="truncate text-sm font-semibold">
-                    Cliente {texto(o, 'idCliente', 'clienteId')} · Veículo {texto(o, 'idVeiculo', 'veiculoId')}
+                    {ehCliente
+                      ? `Veículo ${texto(o, 'idVeiculo', 'veiculoId')}`
+                      : `Cliente ${texto(o, 'idCliente', 'clienteId')} · Veículo ${texto(o, 'idVeiculo', 'veiculoId')}`}
                   </p>
                   <p className="truncate text-xs text-ink-mute">
-                    Responsável {texto(o, 'idFuncionario', 'funcionarioId')}
+                    {ehCliente ? `Ordem #${id ?? '—'}` : `Responsável ${texto(o, 'idFuncionario', 'funcionarioId')}`}
                   </p>
                 </div>
                 <Selo status={s} />

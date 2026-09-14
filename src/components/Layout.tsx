@@ -93,7 +93,9 @@ export default function Layout() {
           ))}
         </nav>
 
-        <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 sm:px-6 lg:py-10">
+        {/* pb generoso: o botao de atividade flutua sobre o canto inferior e
+            sem folga ele cobre o ultimo item da lista. */}
+        <main className="mx-auto w-full max-w-6xl flex-1 px-4 pb-28 pt-6 sm:px-6 lg:pb-16 lg:pt-10">
           <Outlet />
         </main>
       </div>

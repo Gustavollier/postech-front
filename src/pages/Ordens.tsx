@@ -68,7 +68,7 @@ export default function Ordens() {
       <div className="mb-5 space-y-3">
         <input
           className="field h-11 w-full py-2 sm:max-w-md"
-          placeholder="Buscar por cliente, veículo, id…"
+          placeholder="Buscar ordem…"
           value={busca}
           onChange={(e) => setBusca(e.target.value)}
         />
@@ -126,28 +126,37 @@ export default function Ordens() {
                   #{id ?? '?'}
                 </div>
 
-                <div className="min-w-0 flex-1">
+                {/* min-w impede o texto de encolher ate truncar: em telas
+                    estreitas o selo desce de linha em vez de espremer o titulo. */}
+                <div className="min-w-[11rem] flex-1">
                   <p className="truncate text-sm font-semibold">
-                    Cliente {texto(o, 'idCliente', 'clienteId')} · Veículo {texto(o, 'idVeiculo', 'veiculoId')}
+                    {ehCliente
+                      ? `Veículo ${texto(o, 'idVeiculo', 'veiculoId')}`
+                      : `Cliente ${texto(o, 'idCliente', 'clienteId')} · Veículo ${texto(o, 'idVeiculo', 'veiculoId')}`}
                   </p>
                   <p className="mt-0.5 truncate text-xs text-ink-mute">
-                    Responsável {texto(o, 'idFuncionario', 'funcionarioId')} · criada em{' '}
-                    {dataCurta(texto(o, 'criadoEm', 'CriadoEm', 'createdAt'))}
+                    {/* Id de funcionario e informacao interna: nao diz nada a quem
+                        so quer saber do proprio carro. */}
+                    {ehCliente
+                      ? `Aberta em ${dataCurta(texto(o, 'criadoEm', 'CriadoEm', 'createdAt'))}`
+                      : `Responsável ${texto(o, 'idFuncionario', 'funcionarioId')} · aberta em ${dataCurta(texto(o, 'criadoEm', 'CriadoEm', 'createdAt'))}`}
                   </p>
                 </div>
 
-                <Selo status={s} />
+                <div className="flex flex-wrap items-center gap-2">
+                  <Selo status={s} />
 
-                {proximo && !ehCliente && (
-                  <button
-                    onClick={() => avancar(o)}
-                    disabled={mudando === id}
-                    className="btn-ghost px-3 py-1.5 text-xs"
-                    title={`Mover para ${proximo}`}
-                  >
-                    {mudando === id ? 'Movendo…' : `→ ${proximo}`}
-                  </button>
-                )}
+                  {proximo && !ehCliente && (
+                    <button
+                      onClick={() => avancar(o)}
+                      disabled={mudando === id}
+                      className="btn-ghost px-3 py-1.5 text-xs"
+                      title={`Mover para ${proximo}`}
+                    >
+                      {mudando === id ? 'Movendo…' : `→ ${proximo}`}
+                    </button>
+                  )}
+                </div>
               </div>
 
               {/* Trilha do fluxo: mostra onde a ordem está sem precisar ler texto. */}
