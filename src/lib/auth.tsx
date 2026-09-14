@@ -64,12 +64,14 @@ export function ProvedorAuth({ children }: { children: ReactNode }) {
     const token = extrairToken(r);
     const p = lerPayload(token);
     const segundos = typeof r.expires_in === 'number' ? r.expires_in : 900;
+    const clienteId = Number(r.cliente_id ?? p.ClienteId ?? p.nameid ?? p.sub);
     setSessao({
       token,
       tipo: 'cliente',
       nome: String(r.nome ?? p.name ?? p.unique_name ?? 'Cliente'),
-      detalhe: `Cliente #${r.cliente_id ?? p.sub ?? '—'}`,
+      detalhe: 'Meus veículos',
       expiraEm: Date.now() + segundos * 1000,
+      clienteId: Number.isFinite(clienteId) ? clienteId : undefined,
     });
   }, []);
 
@@ -82,7 +84,7 @@ export function ProvedorAuth({ children }: { children: ReactNode }) {
       token,
       tipo: 'funcionario',
       nome: String(p.name ?? p.unique_name ?? 'Funcionário'),
-      detalhe: String(r.cargo ?? p.role ?? 'Funcionário'),
+      detalhe: String(r.cargo ?? p.role ?? 'Equipe'),
       expiraEm: Date.now() + segundos * 1000,
     });
   }, []);

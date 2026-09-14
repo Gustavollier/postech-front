@@ -1,13 +1,12 @@
 import { Link } from 'react-router-dom';
-import { api, comoLista } from '../lib/api';
-import { useDados } from '../lib/useDados';
+import { useOrdens } from '../lib/useOrdens';
 import { STATUS, numero, statusPorId, texto } from '../lib/types';
 import { Cabecalho } from '../components/Layout';
 import { Distribuicao, Erro, Esqueleto, Selo, Tile, Vazio } from '../components/Base';
 import { IconeAtualizar } from '../components/Icones';
 
 export default function Painel() {
-  const { dados, erro, carregando, recarregar } = useDados(async () => comoLista(await api.ordensServico()));
+  const { dados, erro, carregando, recarregar, ehCliente } = useOrdens();
   const ordens = dados ?? [];
 
   const porStatus = STATUS.map((s) => ({
@@ -25,8 +24,12 @@ export default function Painel() {
   return (
     <>
       <Cabecalho
-        titulo="Painel"
-        descricao="Visão geral das ordens de serviço em circulação na oficina."
+        titulo={ehCliente ? 'Meus veículos' : 'Painel'}
+        descricao={
+          ehCliente
+            ? 'Acompanhe o andamento dos serviços dos seus veículos.'
+            : 'Visão geral das ordens de serviço em circulação na oficina.'
+        }
         acao={
           <button onClick={recarregar} className="btn-ghost px-3 py-2 text-xs" disabled={carregando}>
             <IconeAtualizar className={`h-4 w-4 ${carregando ? 'animate-spin' : ''}`} />
@@ -36,7 +39,12 @@ export default function Painel() {
       />
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <Tile rotulo="Ordens no total" valor={ordens.length} carregando={carregando} apoio="Registradas na base" />
+        <Tile
+          rotulo={ehCliente ? 'Minhas ordens' : 'Ordens no total'}
+          valor={ordens.length}
+          carregando={carregando}
+          apoio={ehCliente ? 'Abertas e concluídas' : 'Registradas na base'}
+        />
         <Tile rotulo="Em aberto" valor={abertas} cor="#d95926" carregando={carregando} apoio="Ainda não finalizadas" />
         <Tile rotulo="Em execução" valor={emExecucao} cor="#c98500" carregando={carregando} apoio="Mecânico trabalhando" />
         <Tile rotulo="Entregues" valor={entregues} cor="#008300" carregando={carregando} apoio="Ciclo concluído" />
@@ -78,7 +86,14 @@ export default function Painel() {
         {carregando && !erro && <Esqueleto linhas={4} />}
 
         {!carregando && !erro && ordens.length === 0 && (
-          <Vazio titulo="Nenhuma ordem encontrada" descricao="Quando a oficina registrar ordens, elas aparecem aqui." />
+          <Vazio
+            titulo="Nenhuma ordem encontrada"
+            descricao={
+              ehCliente
+                ? 'Quando a oficina abrir uma ordem para um veículo seu, ela aparece aqui.'
+                : 'Quando a oficina registrar ordens, elas aparecem aqui.'
+            }
+          />
         )}
 
         <div className="space-y-2">

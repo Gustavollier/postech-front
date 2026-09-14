@@ -43,6 +43,8 @@ export type Sessao = {
   nome: string;
   detalhe: string;
   expiraEm: number;
+  /** Preenchido só para cliente: define o escopo do que ele enxerga. */
+  clienteId?: number;
 };
 
 /** Datas chegam em ISO; mostrar o ISO cru na tela é ruído para quem lê. */

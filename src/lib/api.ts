@@ -150,6 +150,9 @@ export const api = {
 
   ordensServico: () => requisicao<unknown>('GET', '/api/v1/ordens-servico'),
   ordensPorStatus: () => requisicao<unknown>('GET', '/api/v1/ordens-servico/ordenado-por-status'),
+  /** Escopo do cliente: a rota geral é da equipe e recusa um token de cliente. */
+  ordensDoCliente: (idCliente: number) =>
+    requisicao<unknown>('GET', `/api/v1/ordens-servico/cliente/${idCliente}`),
   ordem: (id: number) => requisicao<Registro>('GET', `/api/v1/ordens-servico/${id}`),
   criarOrdem: (c: { idCliente: number; idVeiculo: number; idFuncionario: number }) =>
     requisicao<Registro>('POST', '/api/v1/ordens-servico', c),

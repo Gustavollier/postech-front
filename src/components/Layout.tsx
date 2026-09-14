@@ -4,16 +4,20 @@ import Inspetor from './Inspetor';
 import { IconeCliente, IconeOrdem, IconePainel, IconePeca, IconeSair } from './Icones';
 import type { ReactNode } from 'react';
 
+// soEquipe marca o que o perfil de cliente não alcança. Não é enfeite: a API
+// devolve 403 nessas rotas para um token de cliente, então mostrar o item seria
+// oferecer um caminho que termina em erro.
 const itens = [
   { para: '/', rotulo: 'Painel', Icone: IconePainel, exato: true },
   { para: '/ordens', rotulo: 'Ordens de serviço', Icone: IconeOrdem },
-  { para: '/clientes', rotulo: 'Clientes', Icone: IconeCliente },
-  { para: '/pecas', rotulo: 'Peças', Icone: IconePeca },
+  { para: '/clientes', rotulo: 'Clientes', Icone: IconeCliente, soEquipe: true },
+  { para: '/pecas', rotulo: 'Peças', Icone: IconePeca, soEquipe: true },
 ];
 
 export default function Layout() {
   const { sessao, sair } = useAuth();
   const navegar = useNavigate();
+  const visiveis = itens.filter((i) => !i.soEquipe || sessao?.tipo !== 'cliente');
 
   return (
     <div className="flex min-h-screen">
@@ -21,7 +25,7 @@ export default function Layout() {
         <Marca />
 
         <nav className="mt-8 space-y-1">
-          {itens.map(({ para, rotulo, Icone, exato }) => (
+          {visiveis.map(({ para, rotulo, Icone, exato }) => (
             <NavLink
               key={para}
               to={para}
@@ -72,7 +76,7 @@ export default function Layout() {
         </header>
 
         <nav className="flex gap-1 overflow-x-auto border-b border-line px-3 py-2 lg:hidden">
-          {itens.map(({ para, rotulo, exato }) => (
+          {visiveis.map(({ para, rotulo, exato }) => (
             <NavLink
               key={para}
               to={para}

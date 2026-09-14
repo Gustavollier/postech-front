@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
-import { api, comoLista, ErroApi } from '../lib/api';
-import { useDados } from '../lib/useDados';
+import { api, ErroApi } from '../lib/api';
+import { useOrdens } from '../lib/useOrdens';
 import { STATUS, dataCurta, numero, statusPorId, texto } from '../lib/types';
 import type { Registro } from '../lib/types';
 import { Cabecalho } from '../components/Layout';
@@ -10,7 +10,7 @@ import { useAuth } from '../lib/auth';
 
 export default function Ordens() {
   const { sessao } = useAuth();
-  const { dados, erro, carregando, recarregar } = useDados(async () => comoLista(await api.ordensServico()));
+  const { dados, erro, carregando, recarregar, ehCliente } = useOrdens();
   const [filtro, setFiltro] = useState<number | 'todos'>('todos');
   const [busca, setBusca] = useState('');
   const [mudando, setMudando] = useState<number | null>(null);
@@ -52,7 +52,11 @@ export default function Ordens() {
     <>
       <Cabecalho
         titulo="Ordens de serviço"
-        descricao="Acompanhe e movimente as ordens pelo fluxo da oficina."
+        descricao={
+          ehCliente
+            ? 'O andamento dos serviços dos seus veículos.'
+            : 'Acompanhe e movimente as ordens pelo fluxo da oficina.'
+        }
         acao={
           <button onClick={recarregar} className="btn-ghost px-3 py-2 text-xs" disabled={carregando}>
             <IconeAtualizar className={`h-4 w-4 ${carregando ? 'animate-spin' : ''}`} />
@@ -134,7 +138,7 @@ export default function Ordens() {
 
                 <Selo status={s} />
 
-                {proximo && (
+                {proximo && !ehCliente && (
                   <button
                     onClick={() => avancar(o)}
                     disabled={mudando === id}
