@@ -6,6 +6,8 @@ import Painel from './pages/Painel';
 import Ordens from './pages/Ordens';
 import Clientes from './pages/Clientes';
 import Pecas from './pages/Pecas';
+import Funcionarios from './pages/Funcionarios';
+import OrdemDetalhe from './pages/OrdemDetalhe';
 import type { ReactNode } from 'react';
 
 function Protegido({ children }: { children: ReactNode }) {
@@ -27,8 +29,10 @@ export default function App() {
         >
           <Route path="/" element={<Painel />} />
           <Route path="/ordens" element={<Ordens />} />
+          <Route path="/ordens/:id" element={<OrdemDetalhe />} />
           <Route path="/clientes" element={<Clientes />} />
           <Route path="/pecas" element={<Pecas />} />
+          <Route path="/equipe" element={<Funcionarios />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

@@ -12,6 +12,7 @@ const itens = [
   { para: '/ordens', rotulo: 'Ordens de serviço', Icone: IconeOrdem },
   { para: '/clientes', rotulo: 'Clientes', Icone: IconeCliente, soEquipe: true },
   { para: '/pecas', rotulo: 'Peças', Icone: IconePeca, soEquipe: true },
+  { para: '/equipe', rotulo: 'Equipe', Icone: IconeCliente, soEquipe: true },
 ];
 
 export default function Layout() {

@@ -1,5 +1,47 @@
 import type { Registro } from './types';
 
+/** Corpos de escrita, espelhando os schemas do OpenAPI. */
+export type ItemOS = {
+  tipoItem: number;
+  quantidadeItem: number;
+  idFuncionario?: number | null;
+  idPeca?: number | null;
+};
+export type NovoCliente = {
+  nomeCompleto: string;
+  cpf?: string | null;
+  cnpj?: string | null;
+  telefone?: string | null;
+  email?: string | null;
+};
+export type NovoVeiculo = {
+  clienteId: number;
+  marca: string;
+  modelo: string;
+  placa: string;
+  cor?: string | null;
+  anoModelo: number;
+  anoFabricacao: number;
+  kmEntrada: number;
+};
+export type NovaPeca = {
+  nome: string;
+  marca?: string | null;
+  codigo?: string | null;
+  preco: number;
+  unidadeMedida: number;
+  quantidadeEstoque: number;
+};
+export type NovoFuncionario = {
+  nome: string;
+  contato: string;
+  cpf: string;
+  cargo: number;
+  valorHora: number;
+  senha: string;
+  confirmacaoSenha: string;
+};
+
 /**
  * Cliente HTTP do painel.
  *
@@ -159,9 +201,43 @@ export const api = {
   atualizarStatus: (id: number, idFuncionario: number, status: number) =>
     requisicao<Registro>('PATCH', `/api/v1/ordens-servico/${id}/status`, { idFuncionario, status }),
 
+  excluirOrdem: (id: number) => requisicao<unknown>('DELETE', `/api/v1/ordens-servico/${id}`),
+
+  // --- Itens da ordem: mão de obra (0) e peça (1) --------------------------
+  itens: (idOS: number) => requisicao<unknown>('GET', `/api/v1/ordens-servico/${idOS}/itens`),
+  adicionarItem: (idOS: number, item: ItemOS) =>
+    requisicao<unknown>('POST', `/api/v1/ordens-servico/${idOS}/itens`, item),
+  removerItem: (idOS: number, id: number) =>
+    requisicao<unknown>('DELETE', `/api/v1/ordens-servico/${idOS}/itens/${id}`),
+
+  // --- Orçamento: calcular, enviar ao cliente, cliente responde ------------
+  orcamento: (idOS: number) => requisicao<Registro>('GET', `/api/v1/orcamentos/os/${idOS}`),
+  calcularOrcamento: (idOS: number) =>
+    requisicao<unknown>('POST', `/api/v1/orcamentos/os/${idOS}/calcular`),
+  enviarOrcamento: (idOS: number) =>
+    requisicao<unknown>('POST', `/api/v1/orcamentos/os/${idOS}/enviar`),
+  /** status 1 aprova, 2 recusa — é a única escrita que um cliente faz. */
+  responderOrcamento: (idOS: number, status: number) =>
+    requisicao<unknown>('POST', `/api/v1/orcamentos/os/${idOS}/responder`, { status }),
+  valorDaOrdem: (id: number) => requisicao<Registro>('GET', `/api/v1/ordens-servico/${id}/valor`),
+
+  // --- Clientes e veículos ------------------------------------------------
   clientes: () => requisicao<unknown>('GET', '/api/v1/clientes'),
+  cliente: (id: number) => requisicao<Registro>('GET', `/api/v1/clientes/${id}`),
+  criarCliente: (c: NovoCliente) => requisicao<unknown>('POST', '/api/v1/clientes', c),
   veiculosDoCliente: (id: number) => requisicao<unknown>('GET', `/api/v1/clientes/${id}/veiculos`),
+  criarVeiculo: (v: NovoVeiculo) => requisicao<unknown>('POST', '/api/v1/veiculos', v),
+
+  // --- Peças --------------------------------------------------------------
   pecas: () => requisicao<unknown>('GET', '/api/v1/pecas'),
+  criarPeca: (p: NovaPeca) => requisicao<unknown>('POST', '/api/v1/pecas', p),
+  ajustarEstoque: (id: number, quantidade: number) =>
+    requisicao<unknown>('PATCH', `/api/v1/pecas/${id}/estoque`, { quantidade }),
+
+  // --- Funcionários -------------------------------------------------------
+  funcionarios: () => requisicao<unknown>('GET', '/api/v1/Funcionario'),
+  criarFuncionario: (f: NovoFuncionario) => requisicao<unknown>('POST', '/api/v1/Funcionario', f),
+
   tempoMedio: () => requisicao<unknown>('GET', '/api/v1/monitoramento/tempo-execucao-medio'),
 
   /** Health público — não exige token, é o que o synthetics do Datadog observa. */
