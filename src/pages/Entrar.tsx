@@ -5,13 +5,6 @@ import { ErroApi } from '../lib/api';
 import { Marca } from '../components/Layout';
 import { IconeEscudo, IconeOrdem, IconePeca } from '../components/Icones';
 
-// Os CPFs do ambiente de demonstracao ficam aqui de proposito: o acesso do
-// cliente e por CPF, e sem ele nao ha como avaliar o fluxo. A senha da equipe
-// nao: este site e publico e o codigo tambem, entao um literal aqui e uma
-// credencial de producao distribuida para qualquer visitante.
-const CPF_DEMO_CLIENTE = '98765432100';
-const CPF_DEMO_FUNCIONARIO = '11144477735';
-
 function formatarCpf(v: string) {
   const d = v.replace(/\D/g, '').slice(0, 11);
   return d
@@ -25,7 +18,7 @@ export default function Entrar() {
   const navegar = useNavigate();
 
   const [aba, setAba] = useState<'cliente' | 'funcionario'>('cliente');
-  const [cpf, setCpf] = useState(formatarCpf(CPF_DEMO_CLIENTE));
+  const [cpf, setCpf] = useState('');
   const [senha, setSenha] = useState('');
   const [erro, setErro] = useState<string | null>(null);
   const [enviando, setEnviando] = useState(false);
@@ -48,7 +41,8 @@ export default function Entrar() {
   function trocarAba(nova: 'cliente' | 'funcionario') {
     setAba(nova);
     setErro(null);
-    setCpf(formatarCpf(nova === 'cliente' ? CPF_DEMO_CLIENTE : CPF_DEMO_FUNCIONARIO));
+    setCpf('');
+    setSenha('');
   }
 
   return (
@@ -165,15 +159,6 @@ export default function Entrar() {
               {enviando ? 'Autenticando…' : 'Entrar'}
             </button>
           </form>
-
-          <div className="mt-6 rounded-xl border border-line bg-panel/60 px-4 py-3">
-            <p className="text-[11px] font-semibold uppercase tracking-wider text-ink-mute">Ambiente de demonstração</p>
-            <p className="mt-2 font-mono text-[11px] leading-relaxed text-ink-soft">
-              cliente · 987.654.321-00 · sem senha
-              <br />
-              equipe · 111.444.777-35 · senha fornecida à parte
-            </p>
-          </div>
         </div>
       </section>
     </div>
