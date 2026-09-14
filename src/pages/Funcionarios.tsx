@@ -387,7 +387,7 @@ function ModalExcluir({
       titulo="Excluir funcionário"
       descricao={
         funcionario
-          ? `${texto(funcionario, 'nome', 'Nome')} perde o acesso ao painel e deixa de aparecer como responsável.`
+          ? `${texto(funcionario, 'nome', 'Nome')} sai do banco de vez — aqui nao e desativacao como em cliente e peca. Na base atual isso so passa para quem nao tem login nem historico, o que na pratica nao acontece: o login e criado junto com o cadastro.`
           : ''
       }
       aberto={funcionario !== null}

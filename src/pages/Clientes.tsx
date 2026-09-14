@@ -167,7 +167,6 @@ export default function Clientes() {
         {visiveis.map((c, i) => {
           const nome = texto(c, 'nomeCompleto', 'NomeCompleto', 'nome');
           const id = numero(c, 'id', 'Id');
-          const ativo = c.ativo ?? c.Ativo;
           return (
             <article key={String(id ?? i)} className="card flex flex-col p-4">
               <div className="flex items-start gap-3">
@@ -180,11 +179,6 @@ export default function Clientes() {
                     {documento(texto(c, 'cpf', 'CPF'), texto(c, 'cnpj', 'CNPJ'))}
                   </p>
                 </div>
-                {ativo === false && (
-                  <span className="rounded-full bg-[#e66767]/15 px-2 py-0.5 text-[10px] font-bold uppercase text-[#e66767]">
-                    inativo
-                  </span>
-                )}
               </div>
 
               <dl className="mt-4 space-y-1.5 border-t border-line pt-3 text-xs">
@@ -220,7 +214,7 @@ export default function Clientes() {
                     onClick={() => setExclusao(c)}
                     className="btn-ghost px-3 py-1.5 text-xs text-[#e66767] hover:border-[#e66767]/60"
                   >
-                    Excluir
+                    Desativar
                   </button>
                 </div>
               )}
@@ -579,12 +573,13 @@ function ModalExcluirCliente({
 
   return (
     <Confirmacao
-      titulo="Excluir cliente"
+      titulo="Desativar cliente"
       descricao={
         cliente
-          ? `${texto(cliente, 'nomeCompleto', 'NomeCompleto', 'nome')} perde o acesso e sai da listagem. As ordens já registradas continuam no histórico.`
+          ? `${texto(cliente, 'nomeCompleto', 'NomeCompleto', 'nome')} deixa de aparecer nas listagens e nao consegue mais entrar. O cadastro continua no banco e as ordens dele seguem no historico — da para reativar direto na base.`
           : ''
       }
+      rotuloAcao="Desativar"
       aberto={cliente !== null}
       ocupado={ocupado}
       erro={erro}
