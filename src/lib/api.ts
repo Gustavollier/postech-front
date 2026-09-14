@@ -219,7 +219,9 @@ export const api = {
   /** status 1 aprova, 2 recusa — é a única escrita que um cliente faz. */
   responderOrcamento: (idOS: number, status: number) =>
     requisicao<unknown>('POST', `/api/v1/orcamentos/os/${idOS}/responder`, { status }),
-  valorDaOrdem: (id: number) => requisicao<Registro>('GET', `/api/v1/ordens-servico/${id}/valor`),
+  // A rota e /valor/{id}, e nao /{id}/valor. Estava trocada aqui desde o inicio;
+  // nao quebrou nada porque nenhuma tela chegou a chamar.
+  valorDaOrdem: (id: number) => requisicao<Registro>('GET', `/api/v1/ordens-servico/valor/${id}`),
 
   // --- Clientes e veículos ------------------------------------------------
   clientes: () => requisicao<unknown>('GET', '/api/v1/clientes'),
