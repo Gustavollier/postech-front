@@ -4,19 +4,12 @@ import { api, comoLista, ErroApi } from '../lib/api';
 import { useDados } from '../lib/useDados';
 import { ehGerente, useAuth } from '../lib/auth';
 import { useCatalogos, useRotulosOrdem } from '../lib/useCatalogos';
-import { dataCurta, ehPecaItem, moeda, numero, statusPorId, statusPorNome, texto } from '../lib/types';
+import { dataCurta, ehPecaItem, moeda, numero, statusDaOrdem, statusDoOrcamento, statusPorId, statusPorNome, texto } from '../lib/types';
 import type { Registro } from '../lib/types';
 import { Cabecalho } from '../components/Layout';
 import { Erro, Esqueleto, Selo, Vazio } from '../components/Base';
 import { Aviso, Campo, Confirmacao, Modal, Selecao } from '../components/Form';
 import { IconeAtualizar } from '../components/Icones';
-
-/** Status do orçamento, no mesmo enum da API. */
-const ORCAMENTO = [
-  { id: 0, nome: 'Pendente', cor: '#c98500' },
-  { id: 1, nome: 'Aprovado', cor: '#199e70' },
-  { id: 2, nome: 'Rejeitado', cor: '#e66767' },
-];
 
 export default function OrdemDetalhe() {
   const { id } = useParams<{ id: string }>();
@@ -75,10 +68,9 @@ export default function OrdemDetalhe() {
   }
 
   const o = ordem.dados;
-  const status = numero(o ?? {}, 'status', 'Status') ?? 0;
-  const proximo = status < 5 ? statusPorId(status + 1) : null;
-  const statusOrc = orcamento.dados ? numero(orcamento.dados, 'status', 'Status') : null;
-  const orcInfo = ORCAMENTO.find((x) => x.id === statusOrc);
+  const status = statusDaOrdem(o ?? {}).id;
+  const proximo = status >= 0 && status < 5 ? statusPorId(status + 1) : null;
+  const orcInfo = statusDoOrcamento(orcamento.dados);
 
   return (
     <>
@@ -348,7 +340,7 @@ export default function OrdemDetalhe() {
               )}
 
               {/* A única escrita que um cliente faz no sistema. */}
-              {ehCliente && orcamento.dados && statusOrc === 0 && (
+              {ehCliente && orcInfo?.id === 0 && (
                 <>
                   <button
                     onClick={() => executar(() => api.responderOrcamento(idOS, 1), 'Orçamento aprovado. A oficina foi avisada.')}

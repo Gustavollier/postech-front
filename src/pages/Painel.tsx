@@ -3,7 +3,7 @@ import { api, comoLista } from '../lib/api';
 import { useDados } from '../lib/useDados';
 import { useOrdens } from '../lib/useOrdens';
 import { useRotulosOrdem } from '../lib/useCatalogos';
-import { STATUS, numero, statusPorId } from '../lib/types';
+import { STATUS, numero, statusDaOrdem } from '../lib/types';
 import type { Registro } from '../lib/types';
 import { Cabecalho } from '../components/Layout';
 import { Distribuicao, Erro, Esqueleto, Selo, Tile, Vazio } from '../components/Base';
@@ -26,12 +26,12 @@ export default function Painel() {
   const base = agrupadas.dados ?? ordens;
   const porStatus = STATUS.map((s) => ({
     ...s,
-    valor: base.filter((o) => numero(o, 'status', 'Status') === s.id).length,
+    valor: base.filter((o) => statusDaOrdem(o).id === s.id).length,
   }));
 
   const abertas = ordens.filter((o) => {
-    const s = numero(o, 'status', 'Status');
-    return s !== null && s < 4;
+    const s = statusDaOrdem(o).id;
+    return s >= 0 && s < 4;
   }).length;
   const emExecucao = porStatus.find((s) => s.id === 3)?.valor ?? 0;
   const entregues = porStatus.find((s) => s.id === 5)?.valor ?? 0;
@@ -116,11 +116,11 @@ export default function Painel() {
         <div className="space-y-2">
           {ordens.slice(0, 6).map((o, i) => {
             const id = numero(o, 'id', 'Id');
-            const s = numero(o, 'status', 'Status') ?? 0;
+            const { id: s, cor } = statusDaOrdem(o);
             return (
               <div key={id ?? i} className="card flex flex-wrap items-center gap-3 px-4 py-3.5 transition-colors hover:border-ink-mute/40">
                 <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl font-mono text-xs font-bold"
-                     style={{ background: `${statusPorId(s).cor}1a`, color: statusPorId(s).cor }}>
+                     style={{ background: `${cor}1a`, color: cor }}>
                   #{id ?? '?'}
                 </div>
                 <div className="min-w-[10rem] flex-1">

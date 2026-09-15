@@ -5,7 +5,7 @@ import { useOrdens } from '../lib/useOrdens';
 import { useDados } from '../lib/useDados';
 import { useAuth } from '../lib/auth';
 import { useRotulosOrdem } from '../lib/useCatalogos';
-import { STATUS, dataCurta, numero, statusPorId, texto } from '../lib/types';
+import { STATUS, dataCurta, numero, statusDaOrdem, texto } from '../lib/types';
 import type { Registro } from '../lib/types';
 import { Cabecalho } from '../components/Layout';
 import { Erro, Esqueleto, Selo, Vazio } from '../components/Base';
@@ -26,8 +26,7 @@ export default function Ordens() {
   const visiveis = useMemo(() => {
     const q = busca.trim().toLowerCase();
     return ordens.filter((o) => {
-      const s = numero(o, 'status', 'Status');
-      if (filtro !== 'todos' && s !== filtro) return false;
+      if (filtro !== 'todos' && statusDaOrdem(o).id !== filtro) return false;
       if (!q) return true;
       // O nome do cliente e a placa não estão no JSON da ordem — só nos rótulos.
       // Buscar apenas no JSON faria a busca ignorar justamente o que está na tela.
@@ -75,7 +74,7 @@ export default function Ordens() {
         <div className="flex flex-wrap gap-1.5">
           <Chip ativo={filtro === 'todos'} onClick={() => setFiltro('todos')} rotulo={`Todas (${ordens.length})`} />
           {STATUS.map((s) => {
-            const n = ordens.filter((o) => numero(o, 'status', 'Status') === s.id).length;
+            const n = ordens.filter((o) => statusDaOrdem(o).id === s.id).length;
             if (n === 0) return null;
             return (
               <Chip
@@ -109,8 +108,7 @@ export default function Ordens() {
       <div className="space-y-2.5">
         {visiveis.map((o, i) => {
           const id = numero(o, 'id', 'Id');
-          const s = numero(o, 'status', 'Status') ?? 0;
-          const cor = statusPorId(s).cor;
+          const { id: s, cor } = statusDaOrdem(o);
 
           return (
             <Link

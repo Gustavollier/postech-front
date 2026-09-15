@@ -78,17 +78,63 @@ export function indexar(lista: Registro[]): Map<number, Registro> {
   return m;
 }
 
+const chaveDeStatus = (v: string) =>
+  v.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, '').toLowerCase();
+
 /**
  * Status pelo nome que a API devolve.
  *
- * O histórico serializa o enum pelo nome em PascalCase e sem acento
- * ("EmDiagnostico"), enquanto aqui o rótulo é escrito para leitura
- * ("Em diagnóstico"). Comparar direto nunca casava: saía o nome cru na tela e a
- * bolinha cinza de status desconhecido.
+ * A API serializa os enums pelo NOME, e nao pelo numero — `((EStatus)x).ToString()`
+ * em quatro mapeadores de response. Chega "EmDiagnostico", em PascalCase e sem
+ * acento, enquanto o rotulo daqui e escrito para leitura ("Em diagnóstico").
  */
 export function statusPorNome(nome: string) {
-  const chave = (v: string) =>
-    v.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, '').toLowerCase();
-  const alvo = chave(nome);
-  return STATUS.find((s) => chave(s.nome) === alvo) ?? { id: -1, nome, cor: '#6b7482' };
+  const alvo = chaveDeStatus(nome);
+  return STATUS.find((s) => chaveDeStatus(s.nome) === alvo) ?? { id: -1, nome, cor: '#6b7482' };
+}
+
+/**
+ * Status da ordem, venha ele como vier.
+ *
+ * Toda a tela lia o status com `numero()`, e a API manda texto: `numero()`
+ * devolvia null, o `?? 0` logo depois virava "Recebida", e assim TODA ordem
+ * aparecia como recebida — selo errado, barra de progresso parada no primeiro
+ * segmento, filtros zerados e o botao de avancar oferecendo sempre o segundo
+ * passo. O numero continua aceito porque os corpos de escrita usam inteiro.
+ */
+export function statusDaOrdem(registro: Registro) {
+  const v = registro.status ?? registro.Status;
+  if (typeof v === 'number') return statusPorId(v);
+  if (typeof v === 'string' && v.trim() !== '') {
+    const n = Number(v);
+    return Number.isNaN(n) ? statusPorNome(v) : statusPorId(n);
+  }
+  return statusPorId(0);
+}
+
+/** Status do orcamento, no mesmo enum da API. */
+export const ORCAMENTO = [
+  { id: 0, nome: 'Pendente', cor: '#c98500' },
+  { id: 1, nome: 'Aprovado', cor: '#199e70' },
+  { id: 2, nome: 'Rejeitado', cor: '#e66767' },
+];
+
+/**
+ * Status do orcamento, nas mesmas duas formas.
+ *
+ * Era lido com `numero()` tambem, e o efeito era pior: `statusOrc` ficava null,
+ * a comparacao `=== 0` nunca dava certo e o botao de aprovar orcamento — a
+ * unica escrita que o cliente faz no sistema — jamais renderizava.
+ */
+export function statusDoOrcamento(registro: Registro | null | undefined) {
+  if (!registro) return null;
+  const v = registro.status ?? registro.Status;
+  if (typeof v === 'number') return ORCAMENTO.find((o) => o.id === v) ?? null;
+  if (typeof v === 'string' && v.trim() !== '') {
+    const n = Number(v);
+    if (!Number.isNaN(n)) return ORCAMENTO.find((o) => o.id === n) ?? null;
+    const alvo = chaveDeStatus(v);
+    return ORCAMENTO.find((o) => chaveDeStatus(o.nome) === alvo) ?? null;
+  }
+  return null;
 }
