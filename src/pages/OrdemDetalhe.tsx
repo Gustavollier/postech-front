@@ -1,8 +1,10 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { api, comoLista, ErroApi } from '../lib/api';
 import { useDados } from '../lib/useDados';
 import { ehGerente, useAuth } from '../lib/auth';
+import { acoesDaOrdem } from '../lib/acoesDaOrdem';
+import type { Acao } from '../lib/acoesDaOrdem';
 import { useCatalogos, useRotulosOrdem } from '../lib/useCatalogos';
 import { dataCurta, ehPecaItem, moeda, numero, statusDaOrdem, statusDoOrcamento, statusPorId, statusPorNome, texto } from '../lib/types';
 import type { Registro } from '../lib/types';
@@ -69,8 +71,38 @@ export default function OrdemDetalhe() {
 
   const o = ordem.dados;
   const status = statusDaOrdem(o ?? {}).id;
-  const proximo = status >= 0 && status < 5 ? statusPorId(status + 1) : null;
   const orcInfo = statusDoOrcamento(orcamento.dados);
+
+  // Valor derivado, nao efeito: tudo que decide os botoes ja esta em maos no
+  // render. Um useEffect so somaria um ciclo em que os botoes mostram o estado
+  // anterior — justamente o que se quer evitar aqui.
+  const { acoes, resumo } = useMemo(
+    () =>
+      acoesDaOrdem({
+        ordem: o ?? null,
+        orcamento: orcamento.dados ?? null,
+        quantidadeDeItens: (itens.dados ?? []).length,
+        ehCliente,
+      }),
+    [o, orcamento.dados, itens.dados, ehCliente],
+  );
+
+
+  function aoClicar(id: Acao['id']) {
+    const proximoStatus = status + 1;
+    const responsavel = numero(o ?? {}, 'idFuncionario', 'funcionarioId') ?? 1;
+    if (id === 'avancar')
+      return executar(() => api.atualizarStatus(idOS, responsavel, proximoStatus),
+        `Ordem movida para ${statusPorId(proximoStatus).nome}.`);
+    if (id === 'calcular')
+      return executar(() => api.calcularOrcamento(idOS), 'Orcamento calculado a partir dos itens.');
+    if (id === 'enviar')
+      return executar(() => api.enviarOrcamento(idOS), 'Orcamento enviado ao cliente.');
+    if (id === 'aprovar')
+      return executar(() => api.responderOrcamento(idOS, 1), 'Orcamento aprovado. A oficina foi avisada.');
+    if (id === 'recusar')
+      return executar(() => api.responderOrcamento(idOS, 2), 'Orcamento recusado.');
+  }
 
   return (
     <>
@@ -131,21 +163,16 @@ export default function OrdemDetalhe() {
               ))}
             </div>
 
+            {resumo && (
+              <p className="mt-4 rounded-xl border border-line bg-raised/50 px-3.5 py-2.5 text-xs text-ink-soft">
+                {resumo}
+              </p>
+            )}
+
             <div className="mt-4 flex flex-wrap gap-2">
-              {!ehCliente && proximo && (
-                <button
-                  onClick={() =>
-                    executar(
-                      () => api.atualizarStatus(idOS, numero(o, 'idFuncionario', 'funcionarioId') ?? 1, status + 1),
-                      `Ordem movida para ${proximo.nome}.`,
-                    )
-                  }
-                  disabled={ocupado}
-                  className="btn-primary"
-                >
-                  Avançar para {proximo.nome}
-                </button>
-              )}
+              {acoes.map((a) => (
+                <BotaoDeAcao key={a.id} acao={a} ocupado={ocupado} aoClicar={() => aoClicar(a.id)} />
+              ))}
               {gerente && (
                 <>
                   <button onClick={() => setEditandoOrdem(true)} className="btn-ghost">
@@ -319,46 +346,9 @@ export default function OrdemDetalhe() {
               </dl>
             )}
 
-            <div className="mt-5 flex flex-wrap gap-2">
-              {!ehCliente && (
-                <>
-                  <button
-                    onClick={() => executar(() => api.calcularOrcamento(idOS), 'Orçamento calculado a partir dos itens.')}
-                    disabled={ocupado}
-                    className="btn-ghost"
-                  >
-                    Calcular
-                  </button>
-                  <button
-                    onClick={() => executar(() => api.enviarOrcamento(idOS), 'Orçamento enviado ao cliente.')}
-                    disabled={ocupado || !orcamento.dados}
-                    className="btn-primary"
-                  >
-                    Enviar ao cliente
-                  </button>
-                </>
-              )}
-
-              {/* A única escrita que um cliente faz no sistema. */}
-              {ehCliente && orcInfo?.id === 0 && (
-                <>
-                  <button
-                    onClick={() => executar(() => api.responderOrcamento(idOS, 1), 'Orçamento aprovado. A oficina foi avisada.')}
-                    disabled={ocupado}
-                    className="btn-primary"
-                  >
-                    Aprovar orçamento
-                  </button>
-                  <button
-                    onClick={() => executar(() => api.responderOrcamento(idOS, 2), 'Orçamento recusado.')}
-                    disabled={ocupado}
-                    className="btn-ghost"
-                  >
-                    Recusar
-                  </button>
-                </>
-              )}
-            </div>
+            {/* As acoes do orcamento vivem no topo, junto das da ordem: sao o
+                mesmo fluxo e precisam do mesmo estado para decidir. Repetir
+                aqui embaixo dava dois lugares para manter em sincronia. */}
           </section>
 
           <ModalOrdem
@@ -871,5 +861,38 @@ function ModalRemoverItem({
       aoFechar={aoFechar}
       aoConfirmar={confirmar}
     />
+  );
+}
+
+/**
+ * Botão de uma ação da ordem.
+ *
+ * Desabilitado ele continua na tela, com o motivo embaixo. Sumir com o botão
+ * esconderia que a ação existe; deixar habilitado entregaria um erro da API.
+ * O `title` repete o motivo para quem navega com leitor de tela.
+ */
+function BotaoDeAcao({
+  acao,
+  ocupado,
+  aoClicar,
+}: {
+  acao: Acao;
+  ocupado: boolean;
+  aoClicar: () => void;
+}) {
+  return (
+    <span className="flex flex-col gap-1">
+      <button
+        onClick={aoClicar}
+        disabled={!acao.ativa || ocupado}
+        title={acao.motivo}
+        className={acao.principal ? 'btn-primary' : 'btn-ghost'}
+      >
+        {acao.rotulo}
+      </button>
+      {!acao.ativa && acao.motivo && (
+        <span className="max-w-[16rem] text-[11px] leading-snug text-ink-mute">{acao.motivo}</span>
+      )}
+    </span>
   );
 }
