@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Motriz">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3987e5"/>
+      <stop offset="1" stop-color="#199e70"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="15" fill="url(#g)"/>
+  <!-- M construído em traço, para continuar legível a 16px -->
+  <path d="M17 44V21.5c0-1 1.3-1.5 2-.7L32 35l13-14.2c.7-.8 2-.3 2 .7V44"
+        fill="none" stroke="#fff" stroke-width="6.5"
+        stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
