@@ -73,7 +73,13 @@ export default function Pecas() {
               <tbody>
                 {pecas.map((p, i) => {
                   const qtd = numero(p, 'quantidadeEmEstoque', 'QuantidadeEmEstoque');
-                  const n = nivel(qtd);
+                  // Reservada é o que os diagnósticos já separaram para ordens
+                  // em andamento: está na prateleira, mas não dá para prometer
+                  // de novo. O nível olha o disponível, que é o que importa
+                  // para quem vai lançar a próxima ordem.
+                  const reservada = numero(p, 'quantidadeReservada') ?? 0;
+                  const disponivel = numero(p, 'disponivel') ?? qtd;
+                  const n = nivel(disponivel);
                   return (
                     <tr key={String(numero(p, 'id', 'Id') ?? i)} className="border-b border-line/50 last:border-0 hover:bg-raised/40">
                       <td className="px-4 py-3">
@@ -88,7 +94,14 @@ export default function Pecas() {
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center justify-end gap-2">
-                          <span className="font-semibold tabular-nums">{qtd ?? '—'}</span>
+                          <span className="text-right">
+                            <span className="block font-semibold tabular-nums">{qtd ?? '—'}</span>
+                            {reservada > 0 && (
+                              <span className="block whitespace-nowrap text-[11px] text-ink-mute">
+                                {reservada} reservada{reservada > 1 ? 's' : ''} · {disponivel} livre{disponivel === 1 ? '' : 's'}
+                              </span>
+                            )}
+                          </span>
                           <span
                             className="hidden whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] font-bold uppercase sm:inline"
                             style={{ background: `${n.cor}1f`, color: n.cor }}
@@ -101,7 +114,7 @@ export default function Pecas() {
                               rota é caminho que termina em 404. */}
                           {gerente && (
                             <button onClick={() => setAjuste(p)} className="btn-ghost px-2 py-1 text-[11px]">
-                              entrada
+                              + entrada
                             </button>
                           )}
                         </div>
@@ -239,7 +252,7 @@ function ModalAjuste({
   aoFechar: () => void;
   aoAjustar: () => void;
 }) {
-  const [quantidade, setQuantidade] = useState('0');
+  const [quantidade, setQuantidade] = useState('1');
   const [erro, setErro] = useState<string | null>(null);
   const [salvando, setSalvando] = useState(false);
 
@@ -259,7 +272,7 @@ function ModalAjuste({
       // registra o quanto entrou e soma. Reserva de peça é do fluxo da ordem e
       // sai pelo outro lado, atômica, por ordem.
       await api.entradaDeEstoque(id, Number(quantidade));
-      setQuantidade('0');
+      setQuantidade('1');
       aoAjustar();
     } catch (e2) {
       setErro(e2 instanceof ErroApi ? e2.message : 'Não foi possível registrar a entrada no estoque.');
@@ -270,17 +283,18 @@ function ModalAjuste({
 
   return (
     <Modal
-      titulo="Ajustar estoque"
+      titulo="Entrada de estoque"
       descricao={peca ? `${texto(peca, 'nome', 'Nome')} · ${atual ?? '—'} em estoque` : ''}
       aberto={peca !== null}
       aoFechar={aoFechar}
     >
       <form onSubmit={salvar} className="space-y-4">
-        <Campo rotulo="Nova quantidade">
+        <Campo rotulo="Quantidade que entrou" dica="Soma ao estoque atual. Não substitui o valor.">
           <input
             className="field"
             type="number"
-            min="0"
+            min="1"
+            step="1"
             value={quantidade}
             onChange={(e) => setQuantidade(e.target.value)}
             required
@@ -295,7 +309,7 @@ function ModalAjuste({
             Cancelar
           </button>
           <button type="submit" className="btn-primary flex-1" disabled={salvando}>
-            {salvando ? 'Salvando…' : 'Ajustar'}
+            {salvando ? 'Registrando…' : 'Registrar entrada'}
           </button>
         </div>
       </form>

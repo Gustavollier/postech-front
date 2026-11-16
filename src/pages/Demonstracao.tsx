@@ -6,7 +6,10 @@ import {
   fixarCorrelacao,
   type ItemDoDiagnostico,
 } from '../lib/api';
+import { moeda, rotulo } from '../lib/types';
 import type { Registro } from '../lib/types';
+import { useAuth } from '../lib/auth';
+import { Cabecalho } from '../components/Layout';
 import { Aviso, Campo } from '../components/Form';
 
 /**
@@ -100,6 +103,19 @@ const ITENS_PADRAO: ItemDoDiagnostico[] = [
   { descricao: 'Filtro de óleo', tipo: 'MaoDeObra', quantidade: 2, valorUnitario: 38.9 },
 ];
 
+/** Completa nove dígitos com os dois verificadores do CPF. */
+function cpfValido(base: string): string {
+  const d = base.replace(/\D/g, '').padEnd(9, '0').slice(0, 9).split('').map(Number);
+  const verificador = (digitos: number[]) => {
+    const soma = digitos.reduce((s, n, i) => s + n * (digitos.length + 1 - i), 0);
+    const resto = (soma * 10) % 11;
+    return resto === 10 ? 0 : resto;
+  };
+  const d1 = verificador(d);
+  const d2 = verificador([...d, d1]);
+  return [...d, d1, d2].join('');
+}
+
 function texto(v: unknown): string {
   return v === null || v === undefined ? '—' : String(v);
 }
@@ -125,9 +141,12 @@ export default function Demonstracao() {
   // A sessão guarda o token, não o id do funcionário — e `AbrirOrdemRequest`
   // exige o id. Buscar o primeiro da equipe é suficiente para a demonstração,
   // e o campo fica editável para a gravação escolher outro responsável.
-  const [idFuncionario, setIdFuncionario] = useState<number | null>(null);
+  const { sessao } = useAuth();
+  const [idFuncionario, setIdFuncionario] = useState<number | null>(sessao?.funcionarioId ?? null);
 
   useEffect(() => {
+    // Quem está logado é o responsável natural; a lista só entra como reserva.
+    if (sessao?.funcionarioId !== undefined) return;
     let ativo = true;
     void (async () => {
       try {
@@ -142,7 +161,7 @@ export default function Demonstracao() {
     return () => {
       ativo = false;
     };
-  }, []);
+  }, [sessao?.funcionarioId]);
 
   const anotar = useCallback((linha: string) => {
     const hora = new Date().toLocaleTimeString('pt-BR');
@@ -186,13 +205,26 @@ export default function Demonstracao() {
     };
   }, [idOrdem, passo]);
 
+  // O cartão do orçamento mostra a situação do pagamento, que muda por evento
+  // (o webhook do Mercado Pago). Relê quando a saga anda, senão ele ficaria em
+  // "Aguardando confirmação" com a ordem já em execução.
+  useEffect(() => {
+    if (idOrdem === null || orcamento === null || passo === null) return;
+    let ativo = true;
+    void api.orcamento(idOrdem).then((o) => ativo && setOrcamento(o)).catch(() => undefined);
+    return () => {
+      ativo = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [passo]);
+
   async function executar(chave: string, acao: () => Promise<void>) {
     setRodando(chave);
     setErro(null);
     try {
       await acao();
     } catch (e) {
-      const msg = e instanceof ErroApi ? `HTTP ${e.status} — ${e.message}` : String(e);
+      const msg = e instanceof ErroApi ? `HTTP ${e.status} — ${e.message}` : e instanceof Error ? e.message : String(e);
       setErro(msg);
       anotar(`✗ ${chave}: ${msg}`);
     } finally {
@@ -216,10 +248,10 @@ export default function Demonstracao() {
     anotar(`Rastro novo: ${id}`);
   }
 
-  // Dígitos verificadores não importam aqui: o Identidade valida formato e
-  // unicidade, e um CPF derivado do instante evita colidir com a execução
-  // anterior da demonstração.
-  const cpfDemo = `000${sufixo}00`.slice(0, 11).padEnd(11, '0');
+  // CPF derivado do instante, para não colidir com a execução anterior — e com
+  // dígitos verificadores de verdade: o Identidade valida os dois, e um CPF só
+  // "com cara de CPF" volta 400 logo no primeiro passo da demonstração.
+  const cpfDemo = cpfValido(`100${sufixo}`);
   const placaDemo = `DEM${sufixo.slice(0, 4)}`;
   const emailDemo = `demo${sufixo}@oficina.test`;
 
@@ -286,7 +318,7 @@ export default function Demonstracao() {
       if (idOrdem === null) throw new Error('Abra a ordem primeiro.');
       const o = await api.orcamento(idOrdem);
       setOrcamento(o);
-      anotar(`✓ orçamento ${texto(o.id)} — valor ${texto(o.valor)}`);
+      anotar(`✓ orçamento ${texto(o.id)} — valor ${moeda(numero(o.valor))}`);
     });
 
   const aprovar = () =>
@@ -294,7 +326,7 @@ export default function Demonstracao() {
       if (idOrdem === null) throw new Error('Abra a ordem primeiro.');
       const o = await api.aprovarOrcamento(idOrdem);
       setOrcamento(o);
-      anotar(`✓ aprovado — pagamento ${texto(o.statusDoPagamento)}`);
+      anotar(`✓ aprovado — pagamento ${rotulo(o.statusDoPagamento)}`);
     });
 
   const rejeitar = () =>
@@ -320,34 +352,77 @@ export default function Demonstracao() {
     finalizar,
   };
 
+  /**
+   * Cada botão habilita só no passo em que a saga aceita a ação.
+   *
+   * Antes bastava existir uma ordem: dava para aprovar um orçamento que o
+   * Billing ainda não tinha montado, ou finalizar antes do pagamento — e a
+   * demonstração parava num 404 ou 409 na frente da câmera. O passo vem do
+   * polling, então o próximo botão acende sozinho quando o evento chega.
+   */
+  const ORDEM_DOS_PASSOS = [
+    'AguardandoDiagnostico',
+    'AguardandoOrcamento',
+    'AguardandoAprovacao',
+    'AguardandoPagamento',
+    'AguardandoExecucao',
+    'Concluida',
+  ];
+  const posicao = passo === null ? -1 : ORDEM_DOS_PASSOS.indexOf(passo);
+  const encerrada = passo === 'Cancelada' || passo === 'Compensando';
+
   const prontoPara = (chave: string) => {
-    if (chave === 'cliente') return correlacao !== '';
-    if (chave === 'ordem') return idCliente !== null && idVeiculo !== null;
-    return idOrdem !== null;
+    if (chave === 'cliente') return correlacao !== '' && idCliente === null;
+    if (chave === 'ordem') return idCliente !== null && idVeiculo !== null && idOrdem === null;
+    if (idOrdem === null || encerrada) return false;
+    if (chave === 'diagnostico') return passo === 'AguardandoDiagnostico';
+    if (chave === 'orcamento') return posicao >= 2;
+    if (chave === 'aprovar') return passo === 'AguardandoAprovacao';
+    if (chave === 'finalizar') return passo === 'AguardandoExecucao';
+    return false;
   };
+
+  const feita = (chave: string) => {
+    if (chave === 'cliente') return idCliente !== null && idVeiculo !== null;
+    if (chave === 'ordem') return idOrdem !== null;
+    if (chave === 'diagnostico') return posicao >= 1;
+    if (chave === 'orcamento') return orcamento !== null;
+    if (chave === 'aprovar') return posicao >= 3;
+    if (chave === 'finalizar') return passo === 'Concluida';
+    return false;
+  };
+
+  /** O que a tela está esperando quando nenhum botão do fluxo está aceso. */
+  const esperando =
+    passo === 'AguardandoOrcamento'
+      ? 'O Billing está montando o orçamento a partir do evento do diagnóstico…'
+      : passo === 'AguardandoPagamento'
+        ? 'Cobrança Pix criada. Aguardando o webhook do Mercado Pago confirmar o pagamento…'
+        : passo === 'Compensando'
+          ? 'A saga está compensando os passos anteriores…'
+          : null;
 
   const urlDePagamento =
     typeof orcamento?.urlDePagamento === 'string' ? orcamento.urlDePagamento : null;
 
   return (
     <div className="space-y-6">
-      <header className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="text-xl font-semibold text-ink">Demonstração da saga</h1>
-          <p className="mt-1 max-w-2xl text-sm text-ink-soft">
-            O fluxo completo de uma ordem atravessando os quatro microsserviços, com um único
-            rastro de correlação. Cada botão é uma chamada ao APIM; o painel da direita lê o
-            estado da saga no orquestrador.
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={iniciar}
-          className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand-deep"
-        >
-          {correlacao ? 'Novo rastro' : 'Iniciar demonstração'}
-        </button>
-      </header>
+      <Cabecalho
+        titulo="Demonstração da saga"
+        descricao="Uma ordem atravessando os quatro microsserviços com um único rastro de correlação. Cada botão é uma chamada ao APIM e acende no passo em que a saga aceita a ação."
+        acao={
+          <button type="button" onClick={iniciar} className="btn-primary px-4 py-2 text-xs">
+            {correlacao ? 'Novo rastro' : 'Iniciar demonstração'}
+          </button>
+        }
+      />
+
+      {!correlacao && (
+        <p className="rounded-lg border border-dashed border-line px-4 py-3 text-sm text-ink-soft">
+          Clique em <span className="font-semibold text-ink">Iniciar demonstração</span> para gerar o
+          Correlation ID do fluxo. Depois siga os passos na ordem.
+        </p>
+      )}
 
       {correlacao && (
         <div className="rounded-lg border border-line bg-raised px-4 py-3">
@@ -369,8 +444,12 @@ export default function Demonstracao() {
               key={etapa.chave}
               className="flex flex-wrap items-center gap-3 rounded-lg border border-line bg-panel px-4 py-3"
             >
-              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-raised text-xs text-ink-soft">
-                {i + 1}
+              <span
+                className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs ${
+                  feita(etapa.chave) ? 'bg-emerald-500/15 text-emerald-300' : 'bg-raised text-ink-soft'
+                }`}
+              >
+                {feita(etapa.chave) ? '✓' : i + 1}
               </span>
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
@@ -389,7 +468,11 @@ export default function Demonstracao() {
                 type="button"
                 disabled={!prontoPara(etapa.chave) || rodando !== null}
                 onClick={() => void acoes[etapa.chave]()}
-                className="rounded-lg border border-line px-3 py-1.5 text-sm text-ink hover:bg-raised disabled:cursor-not-allowed disabled:opacity-40"
+                className={`rounded-lg border px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-40 ${
+                  prontoPara(etapa.chave) && !feita(etapa.chave)
+                    ? 'border-brand bg-brand text-white hover:bg-brand-deep'
+                    : 'border-line text-ink hover:bg-raised'
+                }`}
               >
                 {rodando === etapa.chave ? 'Chamando…' : 'Executar'}
               </button>
@@ -402,13 +485,13 @@ export default function Demonstracao() {
                 Caminho triste: rejeitar o orçamento
               </span>
               <p className="mt-0.5 text-[11px] text-ink-mute">
-                Dispara a compensação: cancela o orçamento e a ordem, sem estornar um pagamento
-                que não aconteceu.
+                Disponível enquanto a saga aguarda a aprovação. Dispara a compensação: cancela o
+                orçamento e a ordem, sem estornar um pagamento que não aconteceu.
               </p>
             </div>
             <button
               type="button"
-              disabled={idOrdem === null || rodando !== null}
+              disabled={passo !== 'AguardandoAprovacao' || rodando !== null}
               onClick={() => void rejeitar()}
               className="rounded-lg border border-amber-500/40 px-3 py-1.5 text-sm text-amber-200 hover:bg-amber-500/10 disabled:cursor-not-allowed disabled:opacity-40"
             >
@@ -428,14 +511,20 @@ export default function Demonstracao() {
             ) : (
               <dl className="mt-3 space-y-2 text-sm">
                 <Linha rotulo="Ordem" valor={texto(idOrdem)} />
-                <Linha rotulo="Passo" valor={texto(saga.passo)} destaque />
-                <Linha rotulo="Status" valor={texto(saga.statusDaOrdem ?? saga.status)} />
+                <Linha rotulo="Passo" valor={rotulo(saga.passo)} destaque />
+                <Linha rotulo="Status" valor={rotulo(saga.statusDaOrdem ?? saga.status)} />
                 <Linha rotulo="Orçamento" valor={texto(saga.idOrcamento)} />
                 <Linha rotulo="Pagamento" valor={texto(saga.idPagamento)} />
                 {saga.motivoDaCompensacao ? (
                   <Linha rotulo="Compensação" valor={texto(saga.motivoDaCompensacao)} />
                 ) : null}
               </dl>
+            )}
+            {esperando && (
+              <p className="mt-3 flex items-start gap-2 text-xs text-amber-200">
+                <span className="mt-1 h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-amber-300" />
+                {esperando}
+              </p>
             )}
             {passo !== null && EM_ANDAMENTO.has(passo) && (
               <p className="mt-3 text-[11px] text-ink-mute">Atualizando a cada 2 s.</p>
@@ -446,11 +535,11 @@ export default function Demonstracao() {
             <section className="rounded-lg border border-line bg-panel p-4">
               <h2 className="text-sm font-semibold text-ink">Orçamento</h2>
               <dl className="mt-3 space-y-2 text-sm">
-                <Linha rotulo="Valor" valor={texto(orcamento.valor)} />
-                <Linha rotulo="Situação" valor={texto(orcamento.status)} />
-                <Linha rotulo="Pagamento" valor={texto(orcamento.statusDoPagamento)} />
+                <Linha rotulo="Valor" valor={moeda(numero(orcamento.valor))} />
+                <Linha rotulo="Situação" valor={rotulo(orcamento.status)} />
+                <Linha rotulo="Pagamento" valor={rotulo(orcamento.statusDoPagamento)} />
               </dl>
-              {urlDePagamento && (
+              {urlDePagamento && passo === 'AguardandoPagamento' && (
                 <a
                   href={urlDePagamento}
                   target="_blank"

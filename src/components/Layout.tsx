@@ -82,7 +82,19 @@ export default function Layout() {
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="sticky top-0 z-30 flex items-center gap-3 border-b border-line bg-fundo/80 px-4 py-3 backdrop-blur-md lg:hidden">
           <Marca compacta />
-          <button onClick={sair} className="btn-ghost ml-auto px-3 py-1.5 text-xs">
+          {/* No celular a barra lateral some, e com ela o cartão da conta: sem
+              este atalho não havia como chegar à troca de senha. */}
+          <NavLink to="/conta" className="ml-auto min-w-0 text-right leading-tight">
+            <span className="block truncate text-xs font-semibold">{sessao?.nome}</span>
+            <span className="block truncate text-[10px] text-ink-mute">{sessao?.detalhe}</span>
+          </NavLink>
+          <button
+            onClick={() => {
+              sair();
+              navegar('/entrar');
+            }}
+            className="btn-ghost px-3 py-1.5 text-xs"
+          >
             Sair
           </button>
         </header>

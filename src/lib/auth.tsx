@@ -99,13 +99,28 @@ export function ProvedorAuth({ children }: { children: ReactNode }) {
     const token = extrairToken(r);
     const p = lerPayload(token);
     const segundos = typeof r.expiresIn === 'number' ? r.expiresIn : 900;
-    aplicarSessao({
+    const funcionarioId = Number(r.funcionarioId ?? p.FuncionarioId ?? p.nameid);
+    const sessaoNova: Sessao = {
       token,
       tipo: 'funcionario',
       nome: String(p.name ?? p.unique_name ?? 'Funcionário'),
       detalhe: String(r.cargo ?? p.role ?? 'Equipe'),
       expiraEm: Date.now() + segundos * 1000,
-    });
+      funcionarioId: Number.isFinite(funcionarioId) ? funcionarioId : undefined,
+    };
+    aplicarSessao(sessaoNova);
+
+    // O token do Identidade não leva o nome, só o id e o cargo. Sem esta
+    // consulta todo mundo da equipe aparecia como "Funcionário". É melhor
+    // esforço: se falhar, a sessão segue valendo com o rótulo genérico.
+    if (sessaoNova.funcionarioId !== undefined) {
+      try {
+        const f = await api.funcionario(sessaoNova.funcionarioId);
+        if (typeof f.nome === 'string' && f.nome) aplicarSessao({ ...sessaoNova, nome: f.nome });
+      } catch {
+        /* segue com o rótulo genérico */
+      }
+    }
   }, [aplicarSessao]);
 
   const sair = useCallback(() => aplicarSessao(null), [aplicarSessao]);

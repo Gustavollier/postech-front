@@ -5,7 +5,7 @@ import { useOrdens } from '../lib/useOrdens';
 import { useDados } from '../lib/useDados';
 import { useAuth } from '../lib/auth';
 import { useRotulosOrdem } from '../lib/useCatalogos';
-import { STATUS, dataCurta, numero, statusDaOrdem, texto } from '../lib/types';
+import { CANCELADA, FLUXO, STATUS, dataCurta, numero, statusDaOrdem, texto } from '../lib/types';
 import type { Registro } from '../lib/types';
 import { Cabecalho } from '../components/Layout';
 import { Erro, Esqueleto, Selo, Vazio } from '../components/Base';
@@ -28,9 +28,9 @@ export default function Ordens() {
     return ordens.filter((o) => {
       if (filtro !== 'todos' && statusDaOrdem(o).id !== filtro) return false;
       if (!q) return true;
-      // O nome do cliente e a placa não estão no JSON da ordem — só nos rótulos.
-      // Buscar apenas no JSON faria a busca ignorar justamente o que está na tela.
-      return `${rotulo.titulo(o)} ${rotulo.responsavel(o)} ${JSON.stringify(o)}`.toLowerCase().includes(q);
+      // Busca no que está na tela: número, cliente, veículo, responsável e status.
+      const alvo = `#${numero(o, 'id') ?? ''} ${rotulo.titulo(o)} ${rotulo.responsavel(o)} ${statusDaOrdem(o).nome}`;
+      return alvo.toLowerCase().includes(q);
     });
   }, [ordens, filtro, busca, rotulo]);
 
@@ -67,7 +67,8 @@ export default function Ordens() {
       <div className="mb-5 space-y-3">
         <input
           className="field h-11 w-full py-2 sm:max-w-md"
-          placeholder="Buscar ordem…"
+          placeholder="Buscar por número, cliente, placa ou responsável…"
+          aria-label="Buscar ordem"
           value={busca}
           onChange={(e) => setBusca(e.target.value)}
         />
@@ -140,11 +141,13 @@ export default function Ordens() {
               </div>
 
               <div className="flex gap-[2px] px-4 pb-3">
-                {STATUS.map((st) => (
+                {/* Ordem cancelada não tem "até onde chegou" confiável na
+                    listagem: a trilha fica toda apagada, e o selo diz o resto. */}
+                {FLUXO.map((st) => (
                   <div
                     key={st.id}
                     className="h-1 flex-1 rounded-full"
-                    style={{ background: st.id <= s ? st.cor : '#232935' }}
+                    style={{ background: s !== CANCELADA && st.id <= s ? st.cor : '#232935' }}
                     title={st.nome}
                   />
                 ))}
@@ -158,7 +161,7 @@ export default function Ordens() {
         <ModalNovaOrdem
           aberto={novaAberta}
           aoFechar={() => setNovaAberta(false)}
-          funcionarioPadrao={sessao?.detalhe === 'Gerente' ? 1 : undefined}
+          funcionarioPadrao={sessao?.funcionarioId}
           aoCriar={() => {
             setNovaAberta(false);
             setAviso({ tipo: 'ok', texto: 'Ordem de serviço aberta.' });

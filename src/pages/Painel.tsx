@@ -1,9 +1,7 @@
 import { Link } from 'react-router-dom';
-import { useDados } from '../lib/useDados';
 import { useOrdens } from '../lib/useOrdens';
 import { useRotulosOrdem } from '../lib/useCatalogos';
 import { STATUS, numero, statusDaOrdem } from '../lib/types';
-import type { Registro } from '../lib/types';
 import { Cabecalho } from '../components/Layout';
 import { Distribuicao, Erro, Esqueleto, Selo, Tile, Vazio } from '../components/Base';
 import { IconeAtualizar } from '../components/Icones';
@@ -13,15 +11,9 @@ export default function Painel() {
   const ordens = dados ?? [];
   const rotulo = useRotulosOrdem(ordens);
 
-  /**
-   * A Fase 4 não tem mais a rota agrupada por status: o OS Service expõe a
-   * lista, e agrupar é trabalho de quem exibe. Fica null de propósito, para a
-   * contagem cair na lista que `useOrdens` já trouxe — uma consulta a menos
-   * atravessando o APIM a cada abertura do painel.
-   */
-  const agrupadas = useDados<Registro[] | null>(async () => null, [ehCliente]);
-
-  const base = agrupadas.dados ?? ordens;
+  // A Fase 4 não tem rota agrupada por status: o OS Service expõe a lista, e
+  // agrupar é trabalho de quem exibe.
+  const base = ordens;
   const porStatus = STATUS.map((s) => ({
     ...s,
     valor: base.filter((o) => statusDaOrdem(o).id === s.id).length,
@@ -32,7 +24,7 @@ export default function Painel() {
     return s >= 0 && s < 4;
   }).length;
   const emExecucao = porStatus.find((s) => s.id === 3)?.valor ?? 0;
-  const entregues = porStatus.find((s) => s.id === 5)?.valor ?? 0;
+  const concluidas = porStatus.filter((s) => s.id === 4 || s.id === 5).reduce((t, s) => t + s.valor, 0);
 
   return (
     <>
@@ -62,7 +54,7 @@ export default function Painel() {
         />
         <Tile rotulo="Em aberto" valor={abertas} cor="#d95926" carregando={carregando} apoio="Ainda não finalizadas" />
         <Tile rotulo="Em execução" valor={emExecucao} cor="#c98500" carregando={carregando} apoio="Mecânico trabalhando" />
-        <Tile rotulo="Entregues" valor={entregues} cor="#008300" carregando={carregando} apoio="Ciclo concluído" />
+        <Tile rotulo="Concluídas" valor={concluidas} cor="#008300" carregando={carregando} apoio="Finalizadas ou entregues" />
       </div>
 
       <section className="card mt-6 p-5">
@@ -77,7 +69,7 @@ export default function Painel() {
           <>
             <Distribuicao partes={porStatus.map((s) => ({ nome: s.nome, valor: s.valor, cor: s.cor }))} />
             <ul className="mt-4 flex flex-wrap gap-x-5 gap-y-2">
-              {porStatus.map((s) => (
+              {porStatus.filter((s) => s.id <= 5 || s.valor > 0).map((s) => (
                 <li key={s.id} className="flex items-center gap-2 text-xs">
                   <span className="h-2.5 w-2.5 rounded-sm" style={{ background: s.cor }} />
                   <span className="text-ink-soft">{s.nome}</span>
@@ -116,7 +108,7 @@ export default function Painel() {
             const id = numero(o, 'id', 'Id');
             const { id: s, cor } = statusDaOrdem(o);
             return (
-              <div key={id ?? i} className="card flex flex-wrap items-center gap-3 px-4 py-3.5 transition-colors hover:border-ink-mute/40">
+              <Link key={id ?? i} to={`/ordens/${id}`} className="card flex flex-wrap items-center gap-3 px-4 py-3.5 transition-colors hover:border-brand/50">
                 <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl font-mono text-xs font-bold"
                      style={{ background: `${cor}1a`, color: cor }}>
                   #{id ?? '?'}
@@ -128,7 +120,7 @@ export default function Painel() {
                   </p>
                 </div>
                 <Selo status={s} />
-              </div>
+              </Link>
             );
           })}
         </div>

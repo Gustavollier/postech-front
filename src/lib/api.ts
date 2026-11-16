@@ -295,7 +295,7 @@ function mensagemDeErro(status: number, dados: unknown): string {
 export function comoLista(v: unknown): Registro[] {
   if (Array.isArray(v)) return v as Registro[];
   if (v && typeof v === 'object') {
-    for (const chave of ['items', 'data', 'result', 'value', 'ordens', 'clientes', 'pecas']) {
+    for (const chave of ['itens', 'items', 'data', 'result', 'value', 'ordens', 'clientes', 'pecas']) {
       const interno = (v as Registro)[chave];
       if (Array.isArray(interno)) return interno as Registro[];
     }
@@ -388,7 +388,12 @@ export const api = {
 
   // --- Clientes e veículos: Identidade ------------------------------------
 
-  clientes: () => requisicao<unknown>('GET', `${IDENTIDADE}/clientes`),
+  /**
+   * A listagem é paginada (`{ itens, pagina, tamanho, total }`), 20 por página
+   * se nada for pedido. As telas daqui filtram e cruzam em memória, então
+   * pedimos a página máxima que o serviço aceita.
+   */
+  clientes: () => requisicao<unknown>('GET', `${IDENTIDADE}/clientes?tamanho=100`),
   cliente: (id: number) => requisicao<Registro>('GET', `${IDENTIDADE}/clientes/${id}`),
   /** Busca por CPF ou CNPJ, com ou sem pontuação — a API quer só os dígitos. */
   clientePorDocumento: (documento: string) =>

@@ -1,6 +1,6 @@
 # Painel da Oficina — Frontend
 
-Interface web do Tech Challenge Fase 3 (13SOAT). Consome a API de gestão da oficina **através do Azure API Management**, nunca direto do cluster.
+Interface web do Tech Challenge Fase 4 (13SOAT). Consome os quatro microsserviços da oficina — Identidade, Ordem de Serviço, Execução e Billing — **através do Azure API Management**, nunca direto do cluster.
 
 **No ar:** https://gustavollier.github.io/postech-front/
 
@@ -8,11 +8,28 @@ Interface web do Tech Challenge Fase 3 (13SOAT). Consome a API de gestão da ofi
 
 | Tela | Conteúdo |
 |---|---|
-| **Entrar** | Dois caminhos de autenticação: cliente por CPF (Azure Function) e funcionário por CPF e senha (API no AKS) |
+| **Entrar** | Dois caminhos de autenticação: cliente por CPF (Auth Function) e funcionário por CPF e senha (Identidade) |
 | **Painel** | Totais por situação, distribuição por status e as ordens mais recentes |
-| **Ordens de serviço** | Busca, filtro por status, trilha visual do fluxo e avanço de status |
-| **Clientes** | Pessoas físicas e frotas, com documento formatado |
-| **Peças** | Catálogo com preço e nível de estoque |
+| **Ordens de serviço** | Busca, filtro por status e abertura de ordem |
+| **Ordem** | Trilha da saga ao vivo, diagnóstico com mão de obra e peças do estoque, orçamento, aprovação ou rejeição, link do Pix e finalização |
+| **Clientes** | Pessoas físicas e frotas, com os veículos de cada um |
+| **Peças** | Catálogo, estoque, quantidade reservada por ordens em andamento e entrada de estoque |
+| **Equipe** | Cadastro de funcionários (ações de escrita só para Gerente) |
+| **Demonstração** | A saga inteira numa tela, com um único Correlation ID — é a tela do vídeo |
+
+O cliente enxerga só as próprias ordens e a única escrita dele é responder ao orçamento.
+
+## Teste de ponta a ponta
+
+`e2e/fluxo.mjs` percorre o painel pela interface contra um ambiente real: cadastra cliente, veículo, peça e funcionário, abre a ordem, registra o diagnóstico, entra como cliente e aprova, espera o pagamento, finaliza, e depois repete até a rejeição para cobrir a compensação. Termina na tela de Demonstração.
+
+```bash
+npm run dev                      # em outro terminal
+npm i --no-save playwright       # uma vez; não é dependência do projeto
+E2E_CPF=<cpf do gerente> E2E_SENHA='<senha>' node e2e/fluxo.mjs
+```
+
+Cria dados de verdade (um cliente, um funcionário, uma peça e três ordens por execução), então não roda na pipeline.
 
 ## O inspetor de requisições
 
@@ -28,9 +45,11 @@ Navegador (GitHub Pages)
         ▼
 Azure API Management  ← valida o JWT, aplica rate limit
         ├─ /auth          → Container App (Azure Function, escala a zero)
-        └─ /api/v1/...    → LoadBalancer do AKS → pods da API
-                                    │
-                              Azure SQL Database
+        ├─ /identidade    → AKS → Identidade Service  (Azure SQL)
+        ├─ /os            → AKS → OS Service, orquestra a saga  (Azure SQL)
+        ├─ /execucao      → AKS → Execução Service  (MongoDB)
+        └─ /billing       → AKS → Billing Service  (MongoDB, Mercado Pago)
+                                    └── os três últimos conversam por RabbitMQ
 ```
 
 O painel é estático: não há servidor próprio, segredo embutido nem backend intermediário. Todo o controle de acesso acontece no gateway.

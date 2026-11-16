@@ -1,13 +1,13 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api, comoLista, ErroApi, type ItemDoDiagnostico } from '../lib/api';
 import { useDados } from '../lib/useDados';
 import { useAuth } from '../lib/auth';
-import { dataCurta, moeda, numero, texto } from '../lib/types';
+import { dataCurta, moeda, numero, rotulo, texto } from '../lib/types';
 import type { Registro } from '../lib/types';
 import { Cabecalho } from '../components/Layout';
 import { Erro, Esqueleto, Vazio } from '../components/Base';
-import { Aviso, Campo, Modal } from '../components/Form';
+import { Aviso, Campo, Modal, Selecao } from '../components/Form';
 import { IconeAtualizar } from '../components/Icones';
 
 /**
@@ -35,8 +35,24 @@ const ACAO_DO_PASSO: Record<string, string> = {
 
 const ITENS_SUGERIDOS: ItemDoDiagnostico[] = [
   { descricao: 'Troca de óleo', tipo: 'MaoDeObra', quantidade: 1, valorUnitario: 120.5 },
-  { descricao: 'Filtro de óleo', tipo: 'MaoDeObra', quantidade: 2, valorUnitario: 38.9 },
 ];
+
+/** O caminho feliz da saga, na ordem, para a trilha de progresso. */
+const TRILHA = [
+  { passo: 'AguardandoDiagnostico', nome: 'Diagnóstico' },
+  { passo: 'AguardandoOrcamento', nome: 'Orçamento' },
+  { passo: 'AguardandoAprovacao', nome: 'Aprovação' },
+  { passo: 'AguardandoPagamento', nome: 'Pagamento' },
+  { passo: 'AguardandoExecucao', nome: 'Execução' },
+  { passo: 'Concluida', nome: 'Concluída' },
+];
+
+/** O que a ordem está esperando em cada passo, dito para quem opera. */
+const ESPERA: Record<string, string> = {
+  AguardandoOrcamento: 'O Billing está montando o orçamento a partir do diagnóstico. Leva alguns segundos.',
+  AguardandoPagamento: 'Cobrança Pix criada. A ordem segue sozinha quando o Mercado Pago confirmar o pagamento.',
+  Compensando: 'A saga está desfazendo os passos anteriores.',
+};
 
 export default function OrdemDetalhe() {
   const { id } = useParams<{ id: string }>();
@@ -98,6 +114,36 @@ export default function OrdemDetalhe() {
     return () => window.clearInterval(timer);
   }, [consultarSaga, viva]);
 
+  // Diagnóstico, aprovação e pagamento andam por evento: a resposta do POST
+  // chega antes de o orçamento existir ou de o status mudar. Quem avisa que
+  // algo andou é o passo da saga — quando ele muda, relemos o resto, em vez de
+  // deixar a tela com orçamento e histórico de um passo atrás até alguém
+  // clicar em Atualizar.
+  const passoAtual = typeof saga?.passo === 'string' ? saga.passo : null;
+  const passoVisto = useRef<string | null>(null);
+  useEffect(() => {
+    if (passoAtual === null) return;
+    if (passoVisto.current !== null && passoVisto.current !== passoAtual) {
+      void ordem.recarregar();
+      void historico.recarregar();
+      void orcamento.recarregar();
+    }
+    passoVisto.current = passoAtual;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [passoAtual]);
+
+  // Só a equipe enxerga o cadastro de funcionários; para o cliente o
+  // responsável não é mostrado.
+  const idResponsavel = numero(ordem.dados ?? {}, 'idFuncionario');
+  const responsavel = useDados<Registro | null>(async () => {
+    if (ehCliente || idResponsavel === null) return null;
+    try {
+      return await api.funcionario(idResponsavel);
+    } catch {
+      return null;
+    }
+  }, [ehCliente, idResponsavel]);
+
   const recarregarTudo = useCallback(() => {
     void ordem.recarregar();
     void historico.recarregar();
@@ -115,7 +161,7 @@ export default function OrdemDetalhe() {
     } catch (e) {
       setAviso({
         tipo: 'erro',
-        texto: e instanceof ErroApi ? `HTTP ${e.status} — ${e.message}` : 'A operação falhou.',
+        texto: e instanceof ErroApi ? e.message : 'A operação falhou. Tente de novo.',
       });
     } finally {
       setOcupado(false);
@@ -130,11 +176,14 @@ export default function OrdemDetalhe() {
   }
 
   const dados = ordem.dados;
+  const cancelada = passo === 'Cancelada';
+  const pagamento = typeof orcamento.dados?.statusDoPagamento === 'string' ? orcamento.dados.statusDoPagamento : null;
+  const pago = pagamento === 'Confirmado';
 
   return (
     <>
       <Cabecalho
-        titulo={`Ordem ${idOS}`}
+        titulo={`Ordem #${idOS}`}
         descricao={
           dados
             ? `${texto(dados, 'nomeCliente', 'NomeCliente')} · ${texto(dados, 'descricaoVeiculo', 'DescricaoVeiculo')}`
@@ -160,7 +209,7 @@ export default function OrdemDetalhe() {
       )}
 
       {ordem.erro && <Erro mensagem={ordem.erro} aoTentar={ordem.recarregar} />}
-      {ordem.carregando && !ordem.erro && <Esqueleto linhas={5} />}
+      {ordem.carregando && !dados && !ordem.erro && <Esqueleto linhas={5} />}
 
       {dados && (
         <div className="grid gap-5 lg:grid-cols-[1fr_22rem]">
@@ -168,8 +217,13 @@ export default function OrdemDetalhe() {
             {/* --- A saga: por que a ordem está onde está --- */}
             <section className="card p-5">
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <h2 className="text-sm font-semibold">Saga</h2>
-                {viva && <span className="text-[11px] text-ink-mute">atualizando a cada 3 s</span>}
+                <h2 className="text-sm font-semibold">{ehCliente ? 'Andamento' : 'Saga'}</h2>
+                {viva && saga !== null && (
+                  <span className="flex items-center gap-1.5 text-[11px] text-ink-mute">
+                    <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-brand" />
+                    acompanhando ao vivo
+                  </span>
+                )}
               </div>
 
               {saga === null ? (
@@ -179,27 +233,39 @@ export default function OrdemDetalhe() {
               ) : (
                 <>
                   <div className="mt-4 flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                    <span className="text-lg font-semibold text-brand">{texto(saga, 'passo', 'Passo')}</span>
-                    <span className="text-xs text-ink-soft">
-                      status da ordem: {texto(saga, 'statusDaOrdem', 'StatusDaOrdem')}
+                    <span className={`text-lg font-semibold ${cancelada ? 'text-[#e66767]' : 'text-brand'}`}>
+                      {rotulo(saga.passo)}
                     </span>
+                    {!ehCliente && (
+                      <span className="text-xs text-ink-soft">
+                        status da ordem: {rotulo(saga.statusDaOrdem)}
+                      </span>
+                    )}
                   </div>
 
+                  <Trilha passo={passo} statusDaOrdem={String(saga.statusDaOrdem ?? '')} />
+
                   {saga.motivoDaCompensacao ? (
-                    <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2">
-                      <p className="text-[11px] uppercase tracking-wide text-amber-300/80">Compensação</p>
+                    <div className="mt-4 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2">
+                      <p className="text-[11px] uppercase tracking-wide text-amber-300/80">
+                        {ehCliente ? 'Motivo do cancelamento' : 'Compensação'}
+                      </p>
                       <p className="mt-0.5 text-sm text-amber-100">
                         {texto(saga, 'motivoDaCompensacao', 'MotivoDaCompensacao')}
                       </p>
                     </div>
                   ) : null}
 
-                  <dl className="mt-4 grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
-                    <Par rotulo="Orçamento" valor={texto(saga, 'idOrcamento', 'IdOrcamento')} mono />
-                    <Par rotulo="Pagamento" valor={texto(saga, 'idPagamento', 'IdPagamento')} mono />
-                    <Par rotulo="Referência no adquirente" valor={texto(saga, 'referenciaExterna', 'ReferenciaExterna')} mono />
-                    <Par rotulo="Valor" valor={moeda(numero(saga, 'valor', 'Valor'))} />
-                  </dl>
+                  {/* Ids de correlação entre serviços: úteis para a equipe e
+                      para a demonstração, ruído para o cliente. */}
+                  {!ehCliente && (
+                    <dl className="mt-4 grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
+                      <Par rotulo="Orçamento" valor={texto(saga, 'idOrcamento', 'IdOrcamento')} mono />
+                      <Par rotulo="Pagamento" valor={texto(saga, 'idPagamento', 'IdPagamento')} mono />
+                      <Par rotulo="Referência no adquirente" valor={texto(saga, 'referenciaExterna', 'ReferenciaExterna')} mono />
+                      <Par rotulo="Valor" valor={moeda(numero(saga, 'valor', 'Valor'))} />
+                    </dl>
+                  )}
                 </>
               )}
             </section>
@@ -210,35 +276,53 @@ export default function OrdemDetalhe() {
 
               {orcamento.dados === null ? (
                 <p className="mt-3 text-sm text-ink-mute">
-                  Ainda não existe: ele é montado pelo Billing quando o diagnóstico é registrado.
+                  {ehCliente
+                    ? 'A oficina ainda está avaliando o veículo. O orçamento aparece aqui assim que ficar pronto.'
+                    : 'Ainda não existe: ele é montado pelo Billing quando o diagnóstico é registrado.'}
                 </p>
               ) : (
                 <>
                   <dl className="mt-4 grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
-                    <Par rotulo="Situação" valor={texto(orcamento.dados, 'status', 'Status')} />
-                    <Par rotulo="Pagamento" valor={texto(orcamento.dados, 'statusDoPagamento', 'StatusDoPagamento')} />
+                    <Par rotulo="Situação" valor={rotulo(orcamento.dados.status)} />
+                    <Par rotulo="Pagamento" valor={rotulo(orcamento.dados.statusDoPagamento)} />
                     <Par rotulo="Total" valor={moeda(numero(orcamento.dados, 'valor', 'Valor'))} />
-                    <Par rotulo="Criado" valor={dataCurta(texto(orcamento.dados, 'criadoEm', 'CriadoEm'))} />
+                    {pago && orcamento.dados.pagoEm ? (
+                      <Par rotulo="Pago em" valor={dataCurta(texto(orcamento.dados, 'pagoEm'))} />
+                    ) : (
+                      <Par rotulo="Criado" valor={dataCurta(texto(orcamento.dados, 'criadoEm', 'CriadoEm'))} />
+                    )}
                   </dl>
 
-                  {orcamento.dados.motivoDaRecusaDoPagamento ? (
-                    <p className="mt-3 text-sm text-ink-soft">
-                      Recusa do adquirente: {texto(orcamento.dados, 'motivoDaRecusaDoPagamento', 'MotivoDaRecusaDoPagamento')}
+                  {/* O campo se chama `motivoDaRecusa` no Billing; a tela lia um
+                      nome que não existe e o motivo nunca aparecia. Ele serve
+                      também à rejeição do cliente — essa já está no quadro da
+                      saga —, então aqui só entra quando foi o pagamento. */}
+                  {orcamento.dados.motivoDaRecusa && pagamento === 'Recusado' ? (
+                    <p className="mt-3 text-sm text-[#e66767]">
+                      Pagamento recusado: {texto(orcamento.dados, 'motivoDaRecusa')}
                     </p>
                   ) : null}
 
                   <ItensDoOrcamento orcamento={orcamento.dados} />
 
-                  {typeof orcamento.dados.urlDePagamento === 'string' && orcamento.dados.urlDePagamento ? (
+                  {/* Só enquanto há o que pagar: com o pagamento confirmado ou a
+                      ordem cancelada, o link do Pix é um convite a pagar de novo. */}
+                  {typeof orcamento.dados.urlDePagamento === 'string' && orcamento.dados.urlDePagamento && !pago && !cancelada ? (
                     <a
                       href={orcamento.dados.urlDePagamento}
                       target="_blank"
                       rel="noreferrer"
-                      className="mt-4 inline-block rounded-lg bg-emerald-500/15 px-4 py-2 text-sm text-emerald-300 hover:bg-emerald-500/25"
+                      className="mt-4 inline-block rounded-lg bg-emerald-500/15 px-4 py-2 text-sm font-semibold text-emerald-300 hover:bg-emerald-500/25"
                     >
-                      Abrir o Pix no Mercado Pago
+                      Pagar com Pix no Mercado Pago ↗
                     </a>
                   ) : null}
+
+                  {pago && (
+                    <p className="mt-4 inline-flex items-center gap-2 rounded-lg bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-300">
+                      ✓ Pagamento confirmado
+                    </p>
+                  )}
                 </>
               )}
             </section>
@@ -251,7 +335,9 @@ export default function OrdemDetalhe() {
           </div>
 
           {/* --- Ações e dados da ordem --- */}
-          <aside className="space-y-5">
+          {/* No celular as ações sobem para o topo: empilhadas depois do
+              histórico, o botão do passo atual ficava três telas abaixo. */}
+          <aside className="order-first space-y-5 lg:order-none">
             <section className="card p-5">
               <h2 className="text-sm font-semibold">Ações</h2>
 
@@ -282,14 +368,24 @@ export default function OrdemDetalhe() {
                       </button>
                     </div>
                   ) : (
-                    <p className="mt-3 text-sm text-ink-soft">Nada a responder neste momento.</p>
+                    <p className="mt-3 text-sm text-ink-soft">
+                      {cancelada
+                        ? 'Esta ordem foi cancelada.'
+                        : passo === 'Concluida'
+                          ? 'Serviço concluído. Obrigado!'
+                          : passo === 'AguardandoPagamento'
+                            ? 'Orçamento aprovado. Falta só o pagamento do Pix, no botão ao lado do orçamento.'
+                            : 'Nada a responder neste momento.'}
+                    </p>
                   )}
                 </>
               ) : acaoDisponivel === null ? (
                 <p className="mt-3 text-sm text-ink-soft">
                   {viva
-                    ? 'A saga está esperando um evento, não uma ação sua.'
-                    : 'A saga terminou. Nada a fazer nesta ordem.'}
+                    ? (passo !== null && ESPERA[passo]) || 'A saga está esperando um evento, não uma ação sua.'
+                    : cancelada
+                      ? 'A ordem foi cancelada. Nada a fazer aqui.'
+                      : 'A ordem foi concluída. Nada a fazer aqui.'}
                 </p>
               ) : (
                 <div className="mt-3 space-y-2">
@@ -346,10 +442,19 @@ export default function OrdemDetalhe() {
             <section className="card p-5">
               <h2 className="text-sm font-semibold">Dados da ordem</h2>
               <dl className="mt-3 space-y-2 text-sm">
-                <Par rotulo="Status" valor={texto(dados, 'status', 'Status')} />
-                <Par rotulo="Cliente" valor={texto(dados, 'idCliente', 'IdCliente')} />
-                <Par rotulo="Veículo" valor={texto(dados, 'idVeiculo', 'IdVeiculo')} />
-                <Par rotulo="Responsável" valor={texto(dados, 'idFuncionario', 'IdFuncionario')} />
+                <Par rotulo="Status" valor={cancelada ? 'Cancelada' : rotulo(dados.status)} />
+                <Par rotulo="Cliente" valor={texto(dados, 'nomeCliente')} />
+                <Par rotulo="Veículo" valor={texto(dados, 'descricaoVeiculo')} />
+                {!ehCliente && (
+                  <Par
+                    rotulo="Responsável"
+                    valor={
+                      responsavel.dados
+                        ? texto(responsavel.dados, 'nome')
+                        : `Funcionário ${texto(dados, 'idFuncionario')}`
+                    }
+                  />
+                )}
                 <Par rotulo="Aberta" valor={dataCurta(texto(dados, 'criadoEm', 'CriadoEm'))} />
                 <Par rotulo="Atualizada" valor={dataCurta(texto(dados, 'atualizadoEm', 'AtualizadoEm'))} />
               </dl>
@@ -359,6 +464,7 @@ export default function OrdemDetalhe() {
       )}
 
       <ModalDiagnostico
+        key={modalDiagnostico ? 'aberto' : 'fechado'}
         aberto={modalDiagnostico}
         aoFechar={() => setModalDiagnostico(false)}
         aoRegistrar={async (itens) => {
@@ -413,7 +519,7 @@ function ItensDoOrcamento({ orcamento }: { orcamento: Registro }) {
             <tr key={n} className="border-b border-line/50 last:border-0">
               <td className="py-2">
                 {texto(i, 'descricao', 'Descricao')}
-                <span className="ml-2 text-[11px] text-ink-mute">{texto(i, 'tipo', 'Tipo')}</span>
+                <span className="ml-2 text-[11px] text-ink-mute">{rotulo(i.tipo)}</span>
               </td>
               <td className="py-2 text-right tabular-nums">{texto(i, 'quantidade', 'Quantidade')}</td>
               <td className="py-2 text-right tabular-nums">{moeda(numero(i, 'valorUnitario', 'ValorUnitario'))}</td>
@@ -449,8 +555,8 @@ function Historico({
           <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-brand" />
           <div className="min-w-0">
             <p className="text-sm">
-              {texto(h, 'de', 'De') === '—' ? 'Aberta' : texto(h, 'de', 'De')} →{' '}
-              <span className="font-medium">{texto(h, 'para', 'Para')}</span>
+              {h.de ? `${rotulo(h.de)} → ` : ''}
+              <span className="font-medium">{rotulo(h.para)}</span>
             </p>
             <p className="text-[11px] text-ink-mute">
               {dataCurta(texto(h, 'ocorridoEm', 'OcorridoEm'))}
@@ -464,11 +570,61 @@ function Historico({
 }
 
 /**
+ * A trilha do caminho feliz, com o passo atual em destaque.
+ *
+ * Numa saga cancelada não dá para pintar "até onde chegou" pelo passo — ele
+ * é `Cancelada`, fora da trilha. O que sobra de confiável é o status em que a
+ * ordem ficou, e é por ele que a trilha marca o ponto da interrupção.
+ */
+function Trilha({ passo, statusDaOrdem }: { passo: string | null; statusDaOrdem: string }) {
+  if (passo === null) return null;
+
+  const interrompida = passo === 'Cancelada' || passo === 'Compensando';
+  const PARADA_NO_STATUS: Record<string, number> = {
+    Recebida: 0,
+    EmDiagnostico: 0,
+    AguardandoAprovacao: 2,
+    EmExecucao: 4,
+  };
+  const atual = interrompida
+    ? (PARADA_NO_STATUS[statusDaOrdem] ?? 0)
+    : TRILHA.findIndex((t) => t.passo === passo);
+  const concluida = passo === 'Concluida';
+
+  return (
+    <ol className="mt-4 flex gap-1" aria-label="Progresso da ordem">
+      {TRILHA.map((t, i) => {
+        const feito = concluida || i < atual;
+        const aqui = !concluida && i === atual;
+        const cor = aqui && interrompida ? '#e66767' : feito || aqui ? '#3987e5' : '#232935';
+        return (
+          <li key={t.passo} className="min-w-0 flex-1" aria-current={aqui ? 'step' : undefined}>
+            <div className="h-1.5 rounded-full" style={{ background: cor, opacity: feito ? 0.55 : 1 }} />
+            <p
+              className={`mt-1.5 truncate text-[11px] ${
+                aqui ? 'font-semibold text-ink' : feito ? 'text-ink-soft' : 'text-ink-mute'
+              }`}
+            >
+              {feito ? '✓ ' : ''}
+              {t.nome}
+            </p>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+/**
  * O diagnóstico, que é a entrada dos itens no fluxo.
  *
- * Os itens vêm preenchidos com um par plausível porque esta tela serve também
- * à demonstração: digitar quatro campos na frente da câmera só adiciona tempo
- * morto. Todos continuam editáveis.
+ * Mão de obra é texto livre. Peça é escolhida do estoque: é o `idPeca` que faz
+ * o Execução reservar a unidade para esta ordem e dar baixa na finalização.
+ * Antes a tela só mandava mão de obra — uma "peça" digitada entrava no
+ * orçamento, mas nunca saía do estoque.
+ *
+ * Abre com um item plausível porque esta tela serve também à demonstração:
+ * digitar quatro campos na frente da câmera só adiciona tempo morto.
  */
 function ModalDiagnostico({
   aberto,
@@ -483,20 +639,22 @@ function ModalDiagnostico({
   const [erro, setErro] = useState<string | null>(null);
   const [salvando, setSalvando] = useState(false);
 
-  function alterar(i: number, campo: keyof ItemDoDiagnostico, valor: string) {
-    setItens((atual) =>
-      atual.map((item, n) =>
-        n !== i
-          ? item
-          : {
-              ...item,
-              [campo]:
-                campo === 'quantidade' || campo === 'valorUnitario'
-                  ? Number(valor.replace(',', '.')) || 0
-                  : valor,
-            },
-      ),
-    );
+  const pecas = useDados<Registro[]>(async () => (aberto ? comoLista(await api.pecas()) : []), [aberto]);
+  const catalogo = (pecas.dados ?? []).filter((p) => p.ativo !== false);
+
+  function trocar(i: number, novo: Partial<ItemDoDiagnostico>) {
+    setItens((atual) => atual.map((item, n) => (n === i ? { ...item, ...novo } : item)));
+  }
+
+  const comoNumero = (valor: string) => Number(valor.replace(',', '.')) || 0;
+
+  function escolherPeca(i: number, idPeca: string) {
+    const p = catalogo.find((c) => String(c.id) === idPeca);
+    trocar(i, {
+      idPeca: idPeca || null,
+      descricao: p ? texto(p, 'nome') : '',
+      valorUnitario: p ? (numero(p, 'preco') ?? 0) : 0,
+    });
   }
 
   const total = itens.reduce((s, i) => s + i.quantidade * i.valorUnitario, 0);
@@ -504,6 +662,19 @@ function ModalDiagnostico({
   async function enviar(e: React.FormEvent) {
     e.preventDefault();
     if (itens.length === 0) return setErro('Um diagnóstico sem itens não gera orçamento.');
+    if (itens.some((i) => i.tipo === 'Peca' && !i.idPeca)) return setErro('Escolha a peça do estoque em cada item de peça.');
+    if (itens.some((i) => !i.descricao.trim())) return setErro('Todo item precisa de uma descrição.');
+    if (itens.some((i) => i.quantidade <= 0 || !Number.isInteger(i.quantidade)))
+      return setErro('A quantidade precisa ser um número inteiro maior que zero.');
+    if (itens.some((i) => i.valorUnitario <= 0)) return setErro('O valor unitário precisa ser maior que zero.');
+
+    for (const i of itens) {
+      if (i.tipo !== 'Peca') continue;
+      const p = catalogo.find((c) => String(c.id) === i.idPeca);
+      const disponivel = p ? (numero(p, 'disponivel') ?? 0) : 0;
+      if (i.quantidade > disponivel)
+        return setErro(`Estoque insuficiente de ${i.descricao}: ${disponivel} disponível(is).`);
+    }
 
     setErro(null);
     setSalvando(true);
@@ -517,41 +688,91 @@ function ModalDiagnostico({
   return (
     <Modal
       titulo="Registrar diagnóstico"
-      descricao="Os itens viram o orçamento no Billing, por evento — não por chamada direta."
+      descricao="Os itens viram o orçamento no Billing, por evento. Peças são reservadas no estoque para esta ordem."
       aberto={aberto}
       aoFechar={aoFechar}
     >
       <form onSubmit={enviar} className="space-y-4">
-        {erro && <Aviso tipo="erro" texto={erro} />}
-
         {itens.map((item, i) => (
-          <div key={i} className="grid gap-3 rounded-lg border border-line p-3 sm:grid-cols-[1fr_5rem_7rem]">
-            <Campo rotulo="Descrição">
-              <input
-                className="field"
-                value={item.descricao}
-                onChange={(e) => alterar(i, 'descricao', e.target.value)}
-                required
-              />
-            </Campo>
-            <Campo rotulo="Qtd">
-              <input
-                className="field"
-                inputMode="numeric"
-                value={String(item.quantidade)}
-                onChange={(e) => alterar(i, 'quantidade', e.target.value)}
-                required
-              />
-            </Campo>
-            <Campo rotulo="Unitário">
-              <input
-                className="field"
-                inputMode="decimal"
-                value={String(item.valorUnitario)}
-                onChange={(e) => alterar(i, 'valorUnitario', e.target.value)}
-                required
-              />
-            </Campo>
+          <div key={i} className="space-y-3 rounded-lg border border-line p-3">
+            <div className="flex items-end gap-2">
+              <div className="flex-1">
+                <Campo rotulo={`Item ${i + 1}`}>
+                  <Selecao
+                    valor={item.tipo}
+                    aoMudar={(v) =>
+                      trocar(i, {
+                        tipo: v as ItemDoDiagnostico['tipo'],
+                        idPeca: null,
+                        descricao: '',
+                        valorUnitario: 0,
+                      })
+                    }
+                    opcoes={[
+                      { valor: 'MaoDeObra', rotulo: 'Mão de obra' },
+                      { valor: 'Peca', rotulo: 'Peça do estoque' },
+                    ]}
+                  />
+                </Campo>
+              </div>
+              <button
+                type="button"
+                className="btn-ghost px-3 py-3 text-xs"
+                aria-label={`Remover item ${i + 1}`}
+                onClick={() => setItens((a) => a.filter((_, n) => n !== i))}
+              >
+                Remover
+              </button>
+            </div>
+
+            {item.tipo === 'Peca' ? (
+              <Campo
+                rotulo="Peça"
+                dica={
+                  !pecas.carregando && catalogo.length === 0
+                    ? 'Nenhuma peça cadastrada. Cadastre na tela de Peças.'
+                    : undefined
+                }
+              >
+                <Selecao
+                  valor={item.idPeca ?? ''}
+                  aoMudar={(v) => escolherPeca(i, v)}
+                  vazio={pecas.carregando ? 'Carregando peças…' : 'Selecione a peça…'}
+                  opcoes={catalogo.map((p) => ({
+                    valor: String(p.id),
+                    rotulo: `${texto(p, 'nome')} — ${moeda(numero(p, 'preco'))} · ${numero(p, 'disponivel') ?? 0} disp.`,
+                  }))}
+                />
+              </Campo>
+            ) : (
+              <Campo rotulo="Descrição">
+                <input
+                  className="field"
+                  value={item.descricao}
+                  placeholder="Ex.: Troca de óleo"
+                  onChange={(e) => trocar(i, { descricao: e.target.value })}
+                />
+              </Campo>
+            )}
+
+            <div className="grid grid-cols-2 gap-3">
+              <Campo rotulo="Quantidade">
+                <input
+                  className="field"
+                  inputMode="numeric"
+                  value={String(item.quantidade)}
+                  onChange={(e) => trocar(i, { quantidade: comoNumero(e.target.value) })}
+                />
+              </Campo>
+              <Campo rotulo="Valor unitário (R$)">
+                <input
+                  className="field"
+                  inputMode="decimal"
+                  value={String(item.valorUnitario)}
+                  onChange={(e) => trocar(i, { valorUnitario: comoNumero(e.target.value) })}
+                />
+              </Campo>
+            </div>
           </div>
         ))}
 
@@ -563,16 +784,23 @@ function ModalDiagnostico({
               setItens((a) => [...a, { descricao: '', tipo: 'MaoDeObra', quantidade: 1, valorUnitario: 0 }])
             }
           >
-            + Item
+            + Adicionar item
           </button>
           <p className="text-sm text-ink-soft">
             Total: <span className="font-semibold text-ink">{moeda(total)}</span>
           </p>
         </div>
 
-        <button type="submit" className="btn-primary w-full py-2 text-sm" disabled={salvando}>
-          {salvando ? 'Registrando…' : 'Registrar diagnóstico'}
-        </button>
+        {erro && <Aviso tipo="erro" texto={erro} />}
+
+        <div className="flex gap-2">
+          <button type="button" onClick={aoFechar} className="btn-ghost flex-1">
+            Cancelar
+          </button>
+          <button type="submit" className="btn-primary flex-1" disabled={salvando}>
+            {salvando ? 'Registrando…' : 'Registrar diagnóstico'}
+          </button>
+        </div>
       </form>
     </Modal>
   );
