@@ -305,6 +305,24 @@ export function comoLista(v: unknown): Registro[] {
 
 const doc = (s: string) => s.replace(/\D/g, '');
 
+/**
+ * Repete a chamada enquanto ela responder 404, por alguns segundos.
+ *
+ * Só para o que depende de um evento ainda em trânsito na fila. Qualquer outro
+ * erro sobe na hora; e se o 404 persistir, sobe também — aí o recurso não
+ * existe mesmo.
+ */
+async function comEspera<T>(chamar: () => Promise<T>, tentativas = 8, intervaloMs = 1000): Promise<T> {
+  for (let i = 1; ; i += 1) {
+    try {
+      return await chamar();
+    } catch (e) {
+      if (!(e instanceof ErroApi) || e.status !== 404 || i >= tentativas) throw e;
+      await new Promise((r) => setTimeout(r, intervaloMs));
+    }
+  }
+}
+
 export const api = {
   // --- Autenticação -------------------------------------------------------
 
@@ -359,7 +377,14 @@ export const api = {
     requisicao<Registro>('GET', `${EXECUCAO}/execucao/ordens/${idOrdem}`),
   /** Fecha o diagnóstico com os itens. É o que dispara o orçamento no Billing. */
   registrarDiagnostico: (idOrdem: number, itens: ItemDoDiagnostico[]) =>
-    requisicao<unknown>('POST', `${EXECUCAO}/execucao/ordens/${idOrdem}/diagnostico`, { itens }),
+    // A ordem chega no Execução pela fila, alguns instantes depois de o OS
+    // responder a abertura. Nesse intervalo a saga já diz "aguardando
+    // diagnóstico", mas o Execução ainda devolve 404 — e quem clica rápido
+    // (a demonstração, justamente) tropeçava nisso. 404 aqui quer dizer "ainda
+    // não chegou", então vale esperar um pouco antes de desistir.
+    comEspera(() =>
+      requisicao<unknown>('POST', `${EXECUCAO}/execucao/ordens/${idOrdem}/diagnostico`, { itens }),
+    ),
   finalizarExecucao: (idOrdem: number) =>
     requisicao<unknown>('POST', `${EXECUCAO}/execucao/ordens/${idOrdem}/finalizar`),
 
