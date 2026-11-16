@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { api, comoLista, ErroApi } from '../lib/api';
+import { api, comoLista, ErroApi, type CargoFuncionario } from '../lib/api';
 import { useDados } from '../lib/useDados';
 import { ehGerente, useAuth } from '../lib/auth';
 import { moeda, numero, texto } from '../lib/types';
@@ -9,18 +9,32 @@ import { Erro, Esqueleto, Vazio } from '../components/Base';
 import { Aviso, Campo, Confirmacao, Modal, Selecao } from '../components/Form';
 import { IconeAtualizar } from '../components/Icones';
 
-/** Cargos, no mesmo enum da API. */
-const CARGOS = [
-  { id: 0, nome: 'Mecânico' },
-  { id: 1, nome: 'Recepcionista' },
-  { id: 2, nome: 'Gerente' },
-  { id: 3, nome: 'Estoquista' },
-  { id: 4, nome: 'Eletricista' },
-  { id: 5, nome: 'Lavador' },
-  { id: 6, nome: 'Supervisor' },
+// O cargo deixou de ser número: o Identidade registra JsonStringEnumConverter,
+// então o que vai e vem é o nome do valor do enum. `id` guarda esse nome e
+// `nome` é o rótulo com acento, que é o que a tela mostra.
+const CARGOS: { id: CargoFuncionario; nome: string }[] = [
+  { id: 'Mecanico', nome: 'Mecânico' },
+  { id: 'Recepcionista', nome: 'Recepcionista' },
+  { id: 'Gerente', nome: 'Gerente' },
+  { id: 'Estoquista', nome: 'Estoquista' },
+  { id: 'Eletricista', nome: 'Eletricista' },
+  { id: 'Lavador', nome: 'Lavador' },
+  { id: 'Supervisor', nome: 'Supervisor' },
 ];
 
-const idDoCargo = (nome: string) => CARGOS.find((c) => c.nome.toLowerCase() === nome.toLowerCase())?.id ?? 0;
+/**
+ * O cargo que a API devolveu, de volta ao valor do enum.
+ *
+ * Aceita tanto o nome do enum ("Mecanico") quanto o rótulo exibido
+ * ("Mecânico"), porque a mesma função serve para preencher o formulário de
+ * edição a partir da ficha já carregada na tela.
+ */
+const cargoDaApi = (valor: string): CargoFuncionario => {
+  const achado = CARGOS.find(
+    (c) => c.id.toLowerCase() === valor.toLowerCase() || c.nome.toLowerCase() === valor.toLowerCase(),
+  );
+  return achado?.id ?? 'Mecanico';
+};
 
 export default function Funcionarios() {
   const { sessao } = useAuth();
@@ -43,8 +57,12 @@ export default function Funcionarios() {
   const funcionarios = dados ?? [];
 
   /**
-   * A busca é no servidor, não um filtro da lista já carregada: são as rotas
-   * /Funcionario/nome e /Funcionario/cpf, que devolvem um funcionário só.
+   * A busca virou filtro local.
+   *
+   * O Identidade da Fase 4 expõe a lista e o item por id, e não tem rota de
+   * busca por nome ou CPF. Filtrar aqui, sobre a lista que a tela já carregou,
+   * evita uma chamada ao APIM por tecla e dá o mesmo resultado para uma equipe
+   * de oficina, que tem dezenas de cadastros e não milhares.
    */
   async function buscar(e: React.FormEvent) {
     e.preventDefault();
@@ -53,7 +71,18 @@ export default function Funcionarios() {
 
     setBusca({ carregando: true, erro: null, achado: null });
     try {
-      const achado = modoBusca === 'cpf' ? await api.funcionarioPorCpf(q) : await api.funcionarioPorNome(q);
+      const somenteDigitos = (s: string) => s.replace(/\D/g, '');
+      const alvo = modoBusca === 'cpf' ? somenteDigitos(q) : q.toLowerCase();
+
+      const achado =
+        (dados ?? []).find((f: Registro) =>
+          modoBusca === 'cpf'
+            ? somenteDigitos(texto(f, 'cpf', 'CPF')) === alvo
+            : texto(f, 'nome', 'Nome').toLowerCase().includes(alvo),
+        ) ?? null;
+
+      if (achado === null) throw new ErroApi(404, 'Nenhum funcionário com esse dado na lista.', null);
+
       setBusca({ carregando: false, erro: null, achado });
     } catch (e2) {
       setBusca({
@@ -133,7 +162,7 @@ export default function Funcionarios() {
 
       {busca?.erro && <Aviso tipo="erro" texto={busca.erro} />}
       {busca?.achado && (
-        <p className="mb-3 text-xs text-ink-mute">Resultado da busca no servidor — “Limpar” volta para a lista completa.</p>
+        <p className="mb-3 text-xs text-ink-mute">Resultado do filtro — “Limpar” volta para a lista completa.</p>
       )}
 
       {erro && !busca && <Erro mensagem={erro} aoTentar={recarregar} />}
@@ -277,7 +306,7 @@ function ModalEditar({
     setCampos({
       nome: texto(funcionario, 'nome', 'Nome').replace('—', ''),
       contato: texto(funcionario, 'contato', 'Contato').replace('—', ''),
-      cargo: String(idDoCargo(texto(funcionario, 'cargo', 'Cargo'))),
+      cargo: cargoDaApi(texto(funcionario, 'cargo', 'Cargo')),
       valorHora: String(numero(funcionario, 'valorHora', 'ValorHora') ?? 0),
     });
     setErro(null);
@@ -285,16 +314,18 @@ function ModalEditar({
 
   async function salvar(e: React.FormEvent) {
     e.preventDefault();
-    const cpf = funcionario ? texto(funcionario, 'cpf', 'CPF') : '—';
-    if (cpf === '—') return setErro('Este funcionário veio sem CPF, e é o CPF que identifica ele na atualização.');
+    // Na Fase 4 quem identifica é o id da rota, não o CPF na query: o
+    // Identidade trata o documento como dado do cadastro, não como chave de
+    // endereçamento.
+    if (id === null) return setErro('Este funcionário veio sem id, e é o id que identifica ele na atualização.');
 
     setErro(null);
     setSalvando(true);
     try {
-      await api.atualizarFuncionario(cpf, {
+      await api.atualizarFuncionario(id, {
         nome: campos.nome,
         contato: campos.contato,
-        cargo: Number(campos.cargo),
+        cargo: cargoDaApi(campos.cargo),
         valorHora: Number(campos.valorHora),
       });
       aoSalvar();
@@ -367,13 +398,13 @@ function ModalExcluir({
   const [ocupado, setOcupado] = useState(false);
 
   async function confirmar() {
-    const cpf = funcionario ? texto(funcionario, 'cpf', 'CPF') : '—';
-    if (cpf === '—') return setErro('Sem o CPF não dá para identificar o cadastro na exclusão.');
+    const id = funcionario ? numero(funcionario, 'id', 'Id') : null;
+    if (id === null) return setErro('Sem o id não dá para identificar o cadastro na exclusão.');
 
     setErro(null);
     setOcupado(true);
     try {
-      await api.excluirFuncionario(cpf);
+      await api.excluirFuncionario(id);
       aoExcluir();
     } catch (e) {
       setErro(e instanceof ErroApi ? e.message : 'Não foi possível excluir o funcionário.');
@@ -431,10 +462,12 @@ function ModalFuncionario({
         nome,
         contato,
         cpf: cpf.replace(/\D/g, ''),
-        cargo: Number(cargo),
+        cargo: cargoDaApi(cargo),
         valorHora: Number(valorHora),
+        // A confirmação da senha deixou de ir no corpo: o Identidade não a
+        // recebe mais, e conferir no navegador (logo acima) é onde essa
+        // checagem sempre pertenceu.
         senha,
-        confirmacaoSenha: confirmacao,
       });
       setNome('');
       setContato('');

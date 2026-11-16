@@ -6,7 +6,16 @@ export const STATUS = [
   { id: 3, nome: 'Em execução', cor: '#c98500' },
   { id: 4, nome: 'Finalizada', cor: '#d55181' },
   { id: 5, nome: 'Entregue', cor: '#008300' },
+  // Não é um status do OS Service: é como a tela mostra a ordem cuja saga foi
+  // compensada. O serviço mantém o último status do fluxo (em geral
+  // "AguardandoAprovacao"), e exibir isso faria uma ordem encerrada parecer
+  // parada esperando o cliente. Ver `useOrdens`.
+  { id: 6, nome: 'Cancelada', cor: '#e66767' },
 ] as const;
+
+/** Só os passos do fluxo feliz, na ordem — o que a trilha de progresso desenha. */
+export const FLUXO = STATUS.filter((s) => s.id <= 5);
+export const CANCELADA = 6;
 
 export type StatusId = (typeof STATUS)[number]['id'];
 
@@ -45,6 +54,8 @@ export type Sessao = {
   expiraEm: number;
   /** Preenchido só para cliente: define o escopo do que ele enxerga. */
   clienteId?: number;
+  /** Preenchido só para funcionário: é o responsável padrão de uma ordem nova. */
+  funcionarioId?: number;
 };
 
 /** Datas chegam em ISO; mostrar o ISO cru na tela é ruído para quem lê. */
@@ -137,4 +148,48 @@ export function statusDoOrcamento(registro: Registro | null | undefined) {
     return ORCAMENTO.find((o) => chaveDeStatus(o.nome) === alvo) ?? null;
   }
   return null;
+}
+
+/**
+ * Texto de tela para os enums que a API manda pelo nome.
+ *
+ * "EmDiagnostico", "MaoDeObra" e "SemCobranca" são nomes de código: servem ao
+ * contrato, não a quem lê. O que não estiver no mapa é separado nas maiúsculas,
+ * para um valor novo do backend aparecer legível em vez de quebrar a tela.
+ */
+const ROTULOS: Record<string, string> = {
+  // status da ordem
+  Recebida: 'Recebida',
+  EmDiagnostico: 'Em diagnóstico',
+  AguardandoAprovacao: 'Aguardando aprovação',
+  EmExecucao: 'Em execução',
+  Finalizada: 'Finalizada',
+  Entregue: 'Entregue',
+  Cancelada: 'Cancelada',
+  // passos da saga
+  AguardandoDiagnostico: 'Aguardando diagnóstico',
+  AguardandoOrcamento: 'Montando orçamento',
+  AguardandoPagamento: 'Aguardando pagamento',
+  AguardandoExecucao: 'Em execução',
+  Concluida: 'Concluída',
+  Compensando: 'Compensando',
+  // orçamento e pagamento
+  Pendente: 'Pendente',
+  Aprovado: 'Aprovado',
+  Rejeitado: 'Rejeitado',
+  Cancelado: 'Cancelado',
+  SemCobranca: 'Sem cobrança',
+  AguardandoConfirmacao: 'Aguardando confirmação',
+  Confirmado: 'Confirmado',
+  Recusado: 'Recusado',
+  Estornado: 'Estornado',
+  // itens
+  MaoDeObra: 'Mão de obra',
+  Peca: 'Peça',
+};
+
+export function rotulo(valor: unknown): string {
+  if (valor === null || valor === undefined || valor === '' || valor === '—') return '—';
+  const v = String(valor);
+  return ROTULOS[v] ?? v.replace(/([a-zà-ú])([A-Z])/g, '$1 $2').replace(/^(.)(.*)$/, (_, a: string, b: string) => a + b.toLowerCase());
 }
