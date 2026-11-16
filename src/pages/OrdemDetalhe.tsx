@@ -1,121 +1,152 @@
-import { useCallback, useMemo, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
-import { api, comoLista, ErroApi } from '../lib/api';
+import { useCallback, useEffect, useState } from 'react';
+import { Link, useParams } from 'react-router-dom';
+import { api, comoLista, ErroApi, type ItemDoDiagnostico } from '../lib/api';
 import { useDados } from '../lib/useDados';
-import { ehGerente, useAuth } from '../lib/auth';
-import { acoesDaOrdem } from '../lib/acoesDaOrdem';
-import type { Acao } from '../lib/acoesDaOrdem';
-import { useCatalogos, useRotulosOrdem } from '../lib/useCatalogos';
-import { dataCurta, ehPecaItem, moeda, numero, statusDaOrdem, statusDoOrcamento, statusPorId, statusPorNome, texto } from '../lib/types';
+import { useAuth } from '../lib/auth';
+import { dataCurta, moeda, numero, texto } from '../lib/types';
 import type { Registro } from '../lib/types';
 import { Cabecalho } from '../components/Layout';
-import { Erro, Esqueleto, Selo, Vazio } from '../components/Base';
-import { Aviso, Campo, Confirmacao, Modal, Selecao } from '../components/Form';
+import { Erro, Esqueleto, Vazio } from '../components/Base';
+import { Aviso, Campo, Modal } from '../components/Form';
 import { IconeAtualizar } from '../components/Icones';
+
+/**
+ * Uma ordem de serviço na Fase 4.
+ *
+ * A tela da Fase 3 não sobreviveu à quebra em microsserviços, e não por
+ * estilo: ela era montada em torno de coisas que deixaram de existir. Itens da
+ * ordem agora nascem do diagnóstico no Execução, e não de um CRUD; o status não
+ * se muda por `PATCH`, ele é consequência dos eventos da saga; e orçamento
+ * deixou de ser "calcular e enviar" para ser um agregado do Billing, que o
+ * cliente aprova ou rejeita.
+ *
+ * Então o que esta tela faz é diferente: ela **lê** de quatro serviços e expõe
+ * as poucas ações que de fato existem, cada uma no passo em que a saga as
+ * aceita. O painel da saga é a peça central — é o que explica por que a ordem
+ * está onde está.
+ */
+
+/** Passos em que uma ação do operador faz sentido. */
+const ACAO_DO_PASSO: Record<string, string> = {
+  AguardandoDiagnostico: 'diagnostico',
+  AguardandoAprovacao: 'orcamento',
+  AguardandoExecucao: 'finalizar',
+};
+
+const ITENS_SUGERIDOS: ItemDoDiagnostico[] = [
+  { descricao: 'Troca de óleo', tipo: 'MaoDeObra', quantidade: 1, valorUnitario: 120.5 },
+  { descricao: 'Filtro de óleo', tipo: 'MaoDeObra', quantidade: 2, valorUnitario: 38.9 },
+];
 
 export default function OrdemDetalhe() {
   const { id } = useParams<{ id: string }>();
   const idOS = Number(id);
   const { sessao } = useAuth();
   const ehCliente = sessao?.tipo === 'cliente';
-  const gerente = ehGerente(sessao);
-  const navegar = useNavigate();
 
   const [aviso, setAviso] = useState<{ tipo: 'erro' | 'ok'; texto: string } | null>(null);
   const [ocupado, setOcupado] = useState(false);
-  const [modalItem, setModalItem] = useState(false);
-  const [itemEmEdicao, setItemEmEdicao] = useState<Registro | null>(null);
-  const [itemParaRemover, setItemParaRemover] = useState<Registro | null>(null);
-  const [itemAberto, setItemAberto] = useState<number | null>(null);
-  const [editandoOrdem, setEditandoOrdem] = useState(false);
-  const [excluindoOrdem, setExcluindoOrdem] = useState(false);
+  const [modalDiagnostico, setModalDiagnostico] = useState(false);
+  const [modalRejeicao, setModalRejeicao] = useState(false);
 
-  const ordem = useDados<Registro>(() => api.ordem(idOS), [idOS]);
-  const itens = useDados<Registro[]>(async () => comoLista(await api.itens(idOS)), [idOS]);
-  // O orçamento só existe depois de calculado: 404 aqui é estado normal.
-  const orcamento = useDados<Registro | null>(
-    async () => api.orcamento(idOS).catch(() => null),
+  const ordem = useDados<Registro | null>(
+    async () => (Number.isFinite(idOS) ? await api.ordem(idOS) : null),
     [idOS],
   );
 
-  // O total vem da rota de valor da API, e nao de uma soma feita aqui: quem
-  // sabe somar item e orcamento e o dominio.
-  const valor = useDados<Registro | null>(async () => api.valorDaOrdem(idOS).catch(() => null), [idOS]);
-  // Historico de status: rota publica, e o acompanhamento por link.
-  const historico = useDados<Registro | null>(async () => api.statusDaOrdem(idOS).catch(() => null), [idOS]);
+  const historico = useDados<Registro | null>(
+    async () => (Number.isFinite(idOS) ? await api.statusDaOrdem(idOS) : null),
+    [idOS],
+  );
 
-  const catalogos = useCatalogos();
-  const rotulo = useRotulosOrdem(ordem.dados ? [ordem.dados] : []);
+  const orcamento = useDados<Registro | null>(async () => {
+    if (!Number.isFinite(idOS)) return null;
+    try {
+      return await api.orcamento(idOS);
+    } catch (e) {
+      // 404 é estado normal: o orçamento só existe depois do diagnóstico. Virar
+      // erro na tela faria toda ordem recém-aberta parecer quebrada.
+      if (e instanceof ErroApi && e.status === 404) return null;
+      throw e;
+    }
+  }, [idOS]);
+
+  const [saga, setSaga] = useState<Registro | null>(null);
+
+  /**
+   * O estado da saga, consultado em intervalo enquanto ela estiver viva.
+   *
+   * `emAndamento` vem do próprio orquestrador — quem decide se a saga acabou é
+   * ele, não uma lista de passos mantida aqui, que sairia de sincronia na
+   * primeira mudança da máquina de estados.
+   */
+  const consultarSaga = useCallback(async () => {
+    if (!Number.isFinite(idOS)) return;
+    try {
+      setSaga(await api.saga(idOS));
+    } catch {
+      // A saga pode não existir nos primeiros instantes da ordem.
+    }
+  }, [idOS]);
+
+  const viva = saga === null || saga.emAndamento !== false;
+
+  useEffect(() => {
+    void consultarSaga();
+    if (!viva) return;
+    const timer = window.setInterval(consultarSaga, 3000);
+    return () => window.clearInterval(timer);
+  }, [consultarSaga, viva]);
 
   const recarregarTudo = useCallback(() => {
     void ordem.recarregar();
-    void itens.recarregar();
-    void orcamento.recarregar();
-    void valor.recarregar();
     void historico.recarregar();
-  }, [ordem, itens, orcamento, valor, historico]);
+    void orcamento.recarregar();
+    void consultarSaga();
+  }, [ordem, historico, orcamento, consultarSaga]);
 
-  async function executar(acao: () => Promise<unknown>, sucesso: string) {
+  async function executar(oQue: string, acao: () => Promise<void>) {
     setOcupado(true);
     setAviso(null);
     try {
       await acao();
-      setAviso({ tipo: 'ok', texto: sucesso });
+      setAviso({ tipo: 'ok', texto: oQue });
       recarregarTudo();
     } catch (e) {
-      setAviso({ tipo: 'erro', texto: e instanceof ErroApi ? e.message : 'Não foi possível concluir.' });
+      setAviso({
+        tipo: 'erro',
+        texto: e instanceof ErroApi ? `HTTP ${e.status} — ${e.message}` : 'A operação falhou.',
+      });
     } finally {
       setOcupado(false);
     }
   }
 
-  const o = ordem.dados;
-  const status = statusDaOrdem(o ?? {}).id;
-  const orcInfo = statusDoOrcamento(orcamento.dados);
+  const passo = typeof saga?.passo === 'string' ? saga.passo : null;
+  const acaoDisponivel = passo === null ? null : (ACAO_DO_PASSO[passo] ?? null);
 
-  // Valor derivado, nao efeito: tudo que decide os botoes ja esta em maos no
-  // render. Um useEffect so somaria um ciclo em que os botoes mostram o estado
-  // anterior — justamente o que se quer evitar aqui.
-  const { acoes, resumo } = useMemo(
-    () =>
-      acoesDaOrdem({
-        ordem: o ?? null,
-        orcamento: orcamento.dados ?? null,
-        quantidadeDeItens: (itens.dados ?? []).length,
-        ehCliente,
-      }),
-    [o, orcamento.dados, itens.dados, ehCliente],
-  );
-
-
-  function aoClicar(id: Acao['id']) {
-    const proximoStatus = status + 1;
-    const responsavel = numero(o ?? {}, 'idFuncionario', 'funcionarioId') ?? 1;
-    if (id === 'avancar')
-      return executar(() => api.atualizarStatus(idOS, responsavel, proximoStatus),
-        `Ordem movida para ${statusPorId(proximoStatus).nome}.`);
-    if (id === 'calcular')
-      return executar(() => api.calcularOrcamento(idOS), 'Orcamento calculado a partir dos itens.');
-    if (id === 'enviar')
-      return executar(() => api.enviarOrcamento(idOS), 'Orcamento enviado ao cliente.');
-    if (id === 'aprovar')
-      return executar(() => api.responderOrcamento(idOS, 1), 'Orcamento aprovado. A oficina foi avisada.');
-    if (id === 'recusar')
-      return executar(() => api.responderOrcamento(idOS, 2), 'Orcamento recusado.');
+  if (!Number.isFinite(idOS)) {
+    return <Vazio titulo="Ordem inválida" descricao="O endereço não traz um número de ordem." />;
   }
+
+  const dados = ordem.dados;
 
   return (
     <>
       <Cabecalho
-        titulo={`Ordem #${id}`}
-        descricao={ehCliente ? 'Detalhes do serviço no seu veículo.' : 'Itens, orçamento e andamento.'}
+        titulo={`Ordem ${idOS}`}
+        descricao={
+          dados
+            ? `${texto(dados, 'nomeCliente', 'NomeCliente')} · ${texto(dados, 'descricaoVeiculo', 'DescricaoVeiculo')}`
+            : 'Carregando…'
+        }
         acao={
           <div className="flex gap-2">
             <Link to="/ordens" className="btn-ghost px-3 py-2 text-xs">
-              ← Voltar
+              Voltar
             </Link>
-            <button onClick={recarregarTudo} className="btn-ghost px-3 py-2 text-xs">
-              <IconeAtualizar className="h-4 w-4" />
+            <button onClick={recarregarTudo} className="btn-ghost px-3 py-2 text-xs" disabled={ordem.carregando}>
+              <IconeAtualizar className={`h-4 w-4 ${ordem.carregando ? 'animate-spin' : ''}`} />
               Atualizar
             </button>
           </div>
@@ -129,770 +160,463 @@ export default function OrdemDetalhe() {
       )}
 
       {ordem.erro && <Erro mensagem={ordem.erro} aoTentar={ordem.recarregar} />}
-      {ordem.carregando && <Esqueleto linhas={3} />}
+      {ordem.carregando && !ordem.erro && <Esqueleto linhas={5} />}
 
-      {o && (
-        <>
-          <section className="card mb-5 p-5">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <p className="text-sm font-semibold">{rotulo.titulo(o)}</p>
-                <p className="mt-0.5 text-xs text-ink-mute">
-                  {ehCliente ? '' : `Responsável: ${rotulo.responsavel(o)}`}
+      {dados && (
+        <div className="grid gap-5 lg:grid-cols-[1fr_22rem]">
+          <div className="space-y-5">
+            {/* --- A saga: por que a ordem está onde está --- */}
+            <section className="card p-5">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <h2 className="text-sm font-semibold">Saga</h2>
+                {viva && <span className="text-[11px] text-ink-mute">atualizando a cada 3 s</span>}
+              </div>
+
+              {saga === null ? (
+                <p className="mt-3 text-sm text-ink-mute">
+                  Sem estado de saga para esta ordem ainda.
                 </p>
-              </div>
-              <div className="flex items-center gap-3">
-                {valor.dados && (
-                  <div className="text-right">
-                    <p className="text-[10px] font-semibold uppercase tracking-wider text-ink-mute">Valor da ordem</p>
-                    <p className="text-lg font-bold tabular-nums">{moeda(numero(valor.dados, 'valor', 'Valor'))}</p>
-                  </div>
-                )}
-                <Selo status={status} />
-              </div>
-            </div>
-
-            <div className="mt-4 flex gap-[2px]">
-              {[0, 1, 2, 3, 4, 5].map((st) => (
-                <div
-                  key={st}
-                  className="h-1.5 flex-1 rounded-full"
-                  style={{ background: st <= status ? statusPorId(st).cor : '#232935' }}
-                  title={statusPorId(st).nome}
-                />
-              ))}
-            </div>
-
-            {resumo && (
-              <p className="mt-4 rounded-xl border border-line bg-raised/50 px-3.5 py-2.5 text-xs text-ink-soft">
-                {resumo}
-              </p>
-            )}
-
-            <div className="mt-4 flex flex-wrap gap-2">
-              {acoes.map((a) => (
-                <BotaoDeAcao key={a.id} acao={a} ocupado={ocupado} aoClicar={() => aoClicar(a.id)} />
-              ))}
-              {gerente && (
+              ) : (
                 <>
-                  <button onClick={() => setEditandoOrdem(true)} className="btn-ghost">
-                    Reatribuir
-                  </button>
-                  <button
-                    onClick={() => setExcluindoOrdem(true)}
-                    className="btn-ghost text-[#e66767] hover:border-[#e66767]/60"
-                  >
-                    Excluir ordem
-                  </button>
-                </>
-              )}
-            </div>
-          </section>
-
-          {/* ---------------- Itens ---------------- */}
-          <section className="mb-5">
-            <div className="mb-3 flex items-center justify-between">
-              <h2 className="text-sm font-semibold">Itens do serviço</h2>
-              {!ehCliente && (
-                <button onClick={() => setModalItem(true)} className="btn-ghost px-3 py-1.5 text-xs">
-                  + Adicionar item
-                </button>
-              )}
-            </div>
-
-            {itens.carregando && <Esqueleto linhas={2} />}
-            {!itens.carregando && (itens.dados ?? []).length === 0 && (
-              <Vazio
-                titulo="Nenhum item lançado"
-                descricao={
-                  ehCliente
-                    ? 'A oficina ainda não lançou peças ou mão de obra nesta ordem.'
-                    : 'Adicione mão de obra e peças para poder calcular o orçamento.'
-                }
-              />
-            )}
-
-            <div className="space-y-2">
-              {(itens.dados ?? []).map((it, i) => {
-                const ehPeca = ehPecaItem(it);
-                return (
-                  <div key={numero(it, 'id', 'Id') ?? i} className="card flex items-center gap-3 px-4 py-3">
-                    <span
-                      className="rounded-lg px-2 py-1 text-[10px] font-bold uppercase"
-                      style={{
-                        background: ehPeca ? '#3987e51f' : '#c985001f',
-                        color: ehPeca ? '#3987e5' : '#c98500',
-                      }}
-                    >
-                      {ehPeca ? 'Peça' : 'Mão de obra'}
+                  <div className="mt-4 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                    <span className="text-lg font-semibold text-brand">{texto(saga, 'passo', 'Passo')}</span>
+                    <span className="text-xs text-ink-soft">
+                      status da ordem: {texto(saga, 'statusDaOrdem', 'StatusDaOrdem')}
                     </span>
-                    <span className="min-w-0 flex-1 truncate text-sm">
-                      {/* O catálogo de peças e a lista da equipe são da operação: o
-                          cliente recebe 403 neles. Para ele, um id cru na tela não
-                          diz nada — mostramos o que o item é, sem o id interno. */}
-                      {ehCliente
-                        ? ehPeca
-                          ? 'Peça aplicada no serviço'
-                          : 'Horas de serviço'
-                        : ehPeca
-                          ? catalogos.nomePeca(numero(it, 'idPeca', 'IdPeca'))
-                          : catalogos.nomeFuncionario(numero(it, 'idFuncionario', 'IdFuncionario'))}
-                    </span>
-                    <span className="text-sm font-semibold tabular-nums">
-                      {ehPeca
-                        ? `×${texto(it, 'quantidadeItem', 'QuantidadeItem')}`
-                        : `${texto(it, 'quantidadeItem', 'QuantidadeItem')} h`}
-                    </span>
-                    {!ehCliente && (
-                      <button
-                        onClick={() => setItemAberto(numero(it, 'id', 'Id'))}
-                        className="btn-ghost px-2 py-1 text-[11px]"
-                      >
-                        ver
-                      </button>
-                    )}
-                    {gerente && (
-                      <>
-                        <button onClick={() => setItemEmEdicao(it)} className="btn-ghost px-2 py-1 text-[11px]">
-                          editar
-                        </button>
-                        <button
-                          onClick={() => setItemParaRemover(it)}
-                          className="btn-ghost px-2 py-1 text-[11px] text-[#e66767] hover:border-[#e66767]/60"
-                        >
-                          remover
-                        </button>
-                      </>
-                    )}
                   </div>
-                );
-              })}
-            </div>
-          </section>
 
-          {/* ---------------- Histórico ---------------- */}
-          <section className="card mb-5 p-5">
-            <div className="mb-3 flex items-baseline justify-between gap-3">
-              <h2 className="text-sm font-semibold">Histórico de status</h2>
-              <span className="text-xs text-ink-mute">
-                {historico.dados ? statusPorNome(texto(historico.dados, 'statusAtual', 'StatusAtual')).nome : '—'}
-              </span>
-            </div>
-
-            {historico.carregando && <Esqueleto linhas={2} />}
-            {!historico.carregando && !historico.dados && (
-              <p className="text-sm text-ink-soft">Sem histórico registrado para esta ordem.</p>
-            )}
-
-            <ol className="space-y-0">
-              {comoLista(historico.dados?.historico ?? historico.dados?.Historico ?? []).map((h, i, todos) => {
-                const st = statusPorNome(texto(h, 'statusAtual', 'StatusAtual'));
-                return (
-                  <li key={numero(h, 'id', 'Id') ?? i} className="flex gap-3">
-                    <div className="flex flex-col items-center">
-                      <span className="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: st.cor }} />
-                      {i < todos.length - 1 && <span className="w-px flex-1 bg-line" />}
-                    </div>
-                    <div className="min-w-0 flex-1 pb-4">
-                      <p className="text-sm font-medium">{st.nome}</p>
-                      <p className="text-xs text-ink-mute">
-                        {dataCurta(texto(h, 'updatedAt', 'UpdatedAt'))} · por{' '}
-                        {catalogos.nomeFuncionario(numero(h, 'idFuncionario', 'IdFuncionario'))}
+                  {saga.motivoDaCompensacao ? (
+                    <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2">
+                      <p className="text-[11px] uppercase tracking-wide text-amber-300/80">Compensação</p>
+                      <p className="mt-0.5 text-sm text-amber-100">
+                        {texto(saga, 'motivoDaCompensacao', 'MotivoDaCompensacao')}
                       </p>
                     </div>
-                  </li>
-                );
-              })}
-            </ol>
-          </section>
+                  ) : null}
 
-          {/* ---------------- Orçamento ---------------- */}
-          <section className="card p-5">
-            <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-              <h2 className="text-sm font-semibold">Orçamento</h2>
-              {orcInfo && (
-                <span
-                  className="rounded-full px-2.5 py-1 text-xs font-semibold"
-                  style={{ background: `${orcInfo.cor}1f`, color: orcInfo.cor }}
-                >
-                  {orcInfo.nome}
-                </span>
+                  <dl className="mt-4 grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
+                    <Par rotulo="Orçamento" valor={texto(saga, 'idOrcamento', 'IdOrcamento')} mono />
+                    <Par rotulo="Pagamento" valor={texto(saga, 'idPagamento', 'IdPagamento')} mono />
+                    <Par rotulo="Referência no adquirente" valor={texto(saga, 'referenciaExterna', 'ReferenciaExterna')} mono />
+                    <Par rotulo="Valor" valor={moeda(numero(saga, 'valor', 'Valor'))} />
+                  </dl>
+                </>
               )}
-            </div>
+            </section>
 
-            {orcamento.carregando && <Esqueleto linhas={1} />}
+            {/* --- Orçamento, do Billing --- */}
+            <section className="card p-5">
+              <h2 className="text-sm font-semibold">Orçamento</h2>
 
-            {!orcamento.carregando && !orcamento.dados && (
-              <p className="text-sm text-ink-soft">
-                Ainda não há orçamento para esta ordem.
-                {!ehCliente && ' Calcule a partir dos itens lançados.'}
-              </p>
-            )}
+              {orcamento.dados === null ? (
+                <p className="mt-3 text-sm text-ink-mute">
+                  Ainda não existe: ele é montado pelo Billing quando o diagnóstico é registrado.
+                </p>
+              ) : (
+                <>
+                  <dl className="mt-4 grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
+                    <Par rotulo="Situação" valor={texto(orcamento.dados, 'status', 'Status')} />
+                    <Par rotulo="Pagamento" valor={texto(orcamento.dados, 'statusDoPagamento', 'StatusDoPagamento')} />
+                    <Par rotulo="Total" valor={moeda(numero(orcamento.dados, 'valor', 'Valor'))} />
+                    <Par rotulo="Criado" valor={dataCurta(texto(orcamento.dados, 'criadoEm', 'CriadoEm'))} />
+                  </dl>
 
-            {orcamento.dados && (
-              <dl className="grid gap-3 sm:grid-cols-3">
-                {[
-                  ['Mão de obra', numero(orcamento.dados, 'valorMaoDeObra', 'ValorMaoDeObra')],
-                  ['Peças', numero(orcamento.dados, 'valorPecas', 'ValorPecas')],
-                  ['Total', numero(orcamento.dados, 'valorTotal', 'ValorTotal')],
-                ].map(([rotulo, valor], i) => (
-                  <div key={String(rotulo)} className="rounded-xl border border-line bg-raised/50 px-4 py-3">
-                    <dt className="text-[11px] font-semibold uppercase tracking-wider text-ink-mute">{rotulo}</dt>
-                    <dd className={`mt-1 tabular-nums ${i === 2 ? 'text-xl font-bold' : 'text-base font-semibold'}`}>
-                      {moeda(valor as number | null)}
-                    </dd>
-                  </div>
-                ))}
+                  {orcamento.dados.motivoDaRecusaDoPagamento ? (
+                    <p className="mt-3 text-sm text-ink-soft">
+                      Recusa do adquirente: {texto(orcamento.dados, 'motivoDaRecusaDoPagamento', 'MotivoDaRecusaDoPagamento')}
+                    </p>
+                  ) : null}
+
+                  <ItensDoOrcamento orcamento={orcamento.dados} />
+
+                  {typeof orcamento.dados.urlDePagamento === 'string' && orcamento.dados.urlDePagamento ? (
+                    <a
+                      href={orcamento.dados.urlDePagamento}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mt-4 inline-block rounded-lg bg-emerald-500/15 px-4 py-2 text-sm text-emerald-300 hover:bg-emerald-500/25"
+                    >
+                      Abrir o Pix no Mercado Pago
+                    </a>
+                  ) : null}
+                </>
+              )}
+            </section>
+
+            {/* --- Histórico de status --- */}
+            <section className="card p-5">
+              <h2 className="text-sm font-semibold">Histórico de status</h2>
+              <Historico consulta={historico} />
+            </section>
+          </div>
+
+          {/* --- Ações e dados da ordem --- */}
+          <aside className="space-y-5">
+            <section className="card p-5">
+              <h2 className="text-sm font-semibold">Ações</h2>
+
+              {ehCliente ? (
+                <>
+                  <p className="mt-3 text-xs text-ink-mute">
+                    Como cliente, o que cabe a você é responder ao orçamento.
+                  </p>
+                  {acaoDisponivel === 'orcamento' ? (
+                    <div className="mt-3 space-y-2">
+                      <button
+                        className="btn-primary w-full py-2 text-xs"
+                        disabled={ocupado}
+                        onClick={() =>
+                          void executar('Orçamento aprovado e cobrança criada.', () =>
+                            api.aprovarOrcamento(idOS).then(() => undefined),
+                          )
+                        }
+                      >
+                        Aprovar e pagar
+                      </button>
+                      <button
+                        className="btn-ghost w-full py-2 text-xs"
+                        disabled={ocupado}
+                        onClick={() => setModalRejeicao(true)}
+                      >
+                        Rejeitar
+                      </button>
+                    </div>
+                  ) : (
+                    <p className="mt-3 text-sm text-ink-soft">Nada a responder neste momento.</p>
+                  )}
+                </>
+              ) : acaoDisponivel === null ? (
+                <p className="mt-3 text-sm text-ink-soft">
+                  {viva
+                    ? 'A saga está esperando um evento, não uma ação sua.'
+                    : 'A saga terminou. Nada a fazer nesta ordem.'}
+                </p>
+              ) : (
+                <div className="mt-3 space-y-2">
+                  {acaoDisponivel === 'diagnostico' && (
+                    <button
+                      className="btn-primary w-full py-2 text-xs"
+                      disabled={ocupado}
+                      onClick={() => setModalDiagnostico(true)}
+                    >
+                      Registrar diagnóstico
+                    </button>
+                  )}
+
+                  {acaoDisponivel === 'orcamento' && (
+                    <>
+                      <button
+                        className="btn-primary w-full py-2 text-xs"
+                        disabled={ocupado}
+                        onClick={() =>
+                          void executar('Orçamento aprovado e cobrança criada.', () =>
+                            api.aprovarOrcamento(idOS).then(() => undefined),
+                          )
+                        }
+                      >
+                        Aprovar pelo cliente
+                      </button>
+                      <button
+                        className="btn-ghost w-full py-2 text-xs"
+                        disabled={ocupado}
+                        onClick={() => setModalRejeicao(true)}
+                      >
+                        Rejeitar pelo cliente
+                      </button>
+                    </>
+                  )}
+
+                  {acaoDisponivel === 'finalizar' && (
+                    <button
+                      className="btn-primary w-full py-2 text-xs"
+                      disabled={ocupado}
+                      onClick={() =>
+                        void executar('Execução finalizada.', () =>
+                          api.finalizarExecucao(idOS).then(() => undefined),
+                        )
+                      }
+                    >
+                      Finalizar execução
+                    </button>
+                  )}
+                </div>
+              )}
+            </section>
+
+            <section className="card p-5">
+              <h2 className="text-sm font-semibold">Dados da ordem</h2>
+              <dl className="mt-3 space-y-2 text-sm">
+                <Par rotulo="Status" valor={texto(dados, 'status', 'Status')} />
+                <Par rotulo="Cliente" valor={texto(dados, 'idCliente', 'IdCliente')} />
+                <Par rotulo="Veículo" valor={texto(dados, 'idVeiculo', 'IdVeiculo')} />
+                <Par rotulo="Responsável" valor={texto(dados, 'idFuncionario', 'IdFuncionario')} />
+                <Par rotulo="Aberta" valor={dataCurta(texto(dados, 'criadoEm', 'CriadoEm'))} />
+                <Par rotulo="Atualizada" valor={dataCurta(texto(dados, 'atualizadoEm', 'AtualizadoEm'))} />
               </dl>
-            )}
-
-            {/* As acoes do orcamento vivem no topo, junto das da ordem: sao o
-                mesmo fluxo e precisam do mesmo estado para decidir. Repetir
-                aqui embaixo dava dois lugares para manter em sincronia. */}
-          </section>
-
-          <ModalOrdem
-            aberto={editandoOrdem}
-            ordem={o}
-            idOS={idOS}
-            aoFechar={() => setEditandoOrdem(false)}
-            aoSalvar={() => {
-              setEditandoOrdem(false);
-              setAviso({ tipo: 'ok', texto: 'Ordem reatribuída.' });
-              recarregarTudo();
-            }}
-          />
-
-          <ModalExcluirOrdem
-            aberto={excluindoOrdem}
-            idOS={idOS}
-            aoFechar={() => setExcluindoOrdem(false)}
-            aoExcluir={() => navegar('/ordens')}
-          />
-
-          <ModalDetalheItem idOS={idOS} id={itemAberto} aoFechar={() => setItemAberto(null)} />
-
-          <ModalEditarItem
-            idOS={idOS}
-            item={itemEmEdicao}
-            aoFechar={() => setItemEmEdicao(null)}
-            aoSalvar={() => {
-              setItemEmEdicao(null);
-              setAviso({ tipo: 'ok', texto: 'Item atualizado. Recalcule o orçamento para refletir o novo valor.' });
-              recarregarTudo();
-            }}
-          />
-
-          <ModalRemoverItem
-            idOS={idOS}
-            item={itemParaRemover}
-            aoFechar={() => setItemParaRemover(null)}
-            aoRemover={() => {
-              setItemParaRemover(null);
-              setAviso({ tipo: 'ok', texto: 'Item removido. Recalcule o orçamento.' });
-              recarregarTudo();
-            }}
-          />
-
-          {!ehCliente && (
-            <ModalItem
-              aberto={modalItem}
-              aoFechar={() => setModalItem(false)}
-              idOS={idOS}
-              aoSalvar={(msg) => {
-                setModalItem(false);
-                setAviso({ tipo: 'ok', texto: msg });
-                recarregarTudo();
-              }}
-            />
-          )}
-        </>
+            </section>
+          </aside>
+        </div>
       )}
+
+      <ModalDiagnostico
+        aberto={modalDiagnostico}
+        aoFechar={() => setModalDiagnostico(false)}
+        aoRegistrar={async (itens) => {
+          setModalDiagnostico(false);
+          await executar('Diagnóstico registrado. O Billing monta o orçamento pela fila.', () =>
+            api.registrarDiagnostico(idOS, itens).then(() => undefined),
+          );
+        }}
+      />
+
+      <ModalRejeicao
+        aberto={modalRejeicao}
+        aoFechar={() => setModalRejeicao(false)}
+        aoRejeitar={async (motivo) => {
+          setModalRejeicao(false);
+          await executar('Orçamento rejeitado. A saga entra em compensação.', () =>
+            api.rejeitarOrcamento(idOS, motivo).then(() => undefined),
+          );
+        }}
+      />
     </>
   );
 }
 
-function ModalItem({
-  aberto,
-  aoFechar,
-  idOS,
-  aoSalvar,
-}: {
-  aberto: boolean;
-  aoFechar: () => void;
-  idOS: number;
-  aoSalvar: (msg: string) => void;
-}) {
-  const [tipo, setTipo] = useState('1');
-  const [quantidade, setQuantidade] = useState('1');
-  const [referencia, setReferencia] = useState('');
-  const [erro, setErro] = useState<string | null>(null);
-  const [salvando, setSalvando] = useState(false);
-
-  const pecas = useDados<Registro[]>(async () => (aberto ? comoLista(await api.pecas()) : []), [aberto]);
-  const funcionarios = useDados<Registro[]>(
-    async () => (aberto ? comoLista(await api.funcionarios()) : []),
-    [aberto],
-  );
-
-  const ehPeca = tipo === '1';
-  const lista = ehPeca ? (pecas.dados ?? []) : (funcionarios.dados ?? []);
-
-  async function salvar(e: React.FormEvent) {
-    e.preventDefault();
-    setErro(null);
-    if (!referencia) return setErro(ehPeca ? 'Escolha a peça.' : 'Escolha o funcionário.');
-
-    setSalvando(true);
-    try {
-      await api.adicionarItem(idOS, {
-        tipoItem: Number(tipo),
-        quantidadeItem: Number(quantidade),
-        idPeca: ehPeca ? Number(referencia) : null,
-        idFuncionario: ehPeca ? null : Number(referencia),
-      });
-      aoSalvar(ehPeca ? 'Peça lançada na ordem.' : 'Mão de obra lançada na ordem.');
-    } catch (e2) {
-      setErro(e2 instanceof ErroApi ? e2.message : 'Não foi possível adicionar o item.');
-    } finally {
-      setSalvando(false);
-    }
-  }
-
+function Par({ rotulo, valor, mono = false }: { rotulo: string; valor: string; mono?: boolean }) {
   return (
-    <Modal
-      titulo="Adicionar item"
-      descricao="Peças e horas de mão de obra compõem o valor do orçamento."
-      aberto={aberto}
-      aoFechar={aoFechar}
-    >
-      <form onSubmit={salvar} className="space-y-4">
-        <Campo rotulo="Tipo">
-          <Selecao
-            valor={tipo}
-            aoMudar={(v) => {
-              setTipo(v);
-              setReferencia('');
-            }}
-            opcoes={[
-              { valor: '1', rotulo: 'Peça' },
-              { valor: '0', rotulo: 'Mão de obra' },
-            ]}
-          />
-        </Campo>
-
-        <Campo rotulo={ehPeca ? 'Peça' : 'Funcionário'}>
-          <Selecao
-            valor={referencia}
-            aoMudar={setReferencia}
-            vazio={ehPeca ? 'Selecione a peça…' : 'Selecione o funcionário…'}
-            opcoes={lista.map((r) => ({
-              valor: String(numero(r, 'id', 'Id') ?? ''),
-              rotulo: ehPeca
-                ? `${texto(r, 'nome', 'Nome')} — ${moeda(numero(r, 'preco', 'Preco'))}`
-                : `${texto(r, 'nome', 'Nome')} — ${texto(r, 'cargo', 'Cargo')}`,
-            }))}
-          />
-        </Campo>
-
-        <Campo rotulo={ehPeca ? 'Quantidade' : 'Horas'}>
-          <input
-            className="field"
-            type="number"
-            min="1"
-            value={quantidade}
-            onChange={(e) => setQuantidade(e.target.value)}
-            required
-          />
-        </Campo>
-
-        {erro && <Aviso tipo="erro" texto={erro} />}
-
-        <div className="flex gap-2 pt-1">
-          <button type="button" onClick={aoFechar} className="btn-ghost flex-1">
-            Cancelar
-          </button>
-          <button type="submit" className="btn-primary flex-1" disabled={salvando}>
-            {salvando ? 'Salvando…' : 'Adicionar'}
-          </button>
-        </div>
-      </form>
-    </Modal>
+    <div className="flex items-baseline justify-between gap-3">
+      <dt className="text-xs text-ink-mute">{rotulo}</dt>
+      <dd className={`truncate text-right ${mono ? 'font-mono text-xs' : ''} text-ink-soft`}>{valor}</dd>
+    </div>
   );
 }
 
-/** Reatribuição: troca cliente, veículo e responsável da ordem já aberta. */
-function ModalOrdem({
-  aberto,
-  ordem,
-  idOS,
-  aoFechar,
-  aoSalvar,
-}: {
-  aberto: boolean;
-  ordem: Registro;
-  idOS: number;
-  aoFechar: () => void;
-  aoSalvar: () => void;
-}) {
-  const [cliente, setCliente] = useState('');
-  const [veiculo, setVeiculo] = useState('');
-  const [funcionario, setFuncionario] = useState('');
-  const [erro, setErro] = useState<string | null>(null);
-  const [salvando, setSalvando] = useState(false);
-  const [preenchido, setPreenchido] = useState(false);
+function ItensDoOrcamento({ orcamento }: { orcamento: Registro }) {
+  const itens = comoLista(orcamento.itens ?? orcamento.Itens);
 
-  if (aberto && !preenchido) {
-    setPreenchido(true);
-    setCliente(String(numero(ordem, 'idCliente', 'clienteId') ?? ''));
-    setVeiculo(String(numero(ordem, 'idVeiculo', 'veiculoId') ?? ''));
-    setFuncionario(String(numero(ordem, 'idFuncionario', 'funcionarioId') ?? ''));
-    setErro(null);
-  }
-  if (!aberto && preenchido) setPreenchido(false);
-
-  const clientes = useDados<Registro[]>(async () => (aberto ? comoLista(await api.clientes()) : []), [aberto]);
-  const funcionarios = useDados<Registro[]>(async () => (aberto ? comoLista(await api.funcionarios()) : []), [aberto]);
-  const veiculos = useDados<Registro[]>(
-    async () => (cliente ? comoLista(await api.veiculosDoCliente(Number(cliente))) : []),
-    [cliente],
-  );
-
-  async function salvar(e: React.FormEvent) {
-    e.preventDefault();
-    if (!cliente || !veiculo || !funcionario) return setErro('Selecione cliente, veículo e responsável.');
-
-    setErro(null);
-    setSalvando(true);
-    try {
-      await api.atualizarOrdem(idOS, {
-        idCliente: Number(cliente),
-        idVeiculo: Number(veiculo),
-        idFuncionario: Number(funcionario),
-      });
-      aoSalvar();
-    } catch (e2) {
-      setErro(e2 instanceof ErroApi ? e2.message : 'Não foi possível reatribuir a ordem.');
-    } finally {
-      setSalvando(false);
-    }
-  }
+  if (itens.length === 0) return null;
 
   return (
-    <Modal
-      titulo="Reatribuir ordem"
-      descricao="Muda de quem é a ordem, qual carro e quem responde por ela. O status não muda aqui."
-      aberto={aberto}
-      aoFechar={aoFechar}
-    >
-      <form onSubmit={salvar} className="space-y-4">
-        <Campo rotulo="Cliente">
-          <Selecao
-            valor={cliente}
-            aoMudar={(v) => {
-              setCliente(v);
-              setVeiculo('');
-            }}
-            vazio="Selecione o cliente…"
-            opcoes={(clientes.dados ?? []).map((c) => ({
-              valor: String(numero(c, 'id', 'Id') ?? ''),
-              rotulo: texto(c, 'nomeCompleto', 'NomeCompleto', 'nome'),
-            }))}
-          />
-        </Campo>
-
-        <Campo rotulo="Veículo">
-          <Selecao
-            valor={veiculo}
-            aoMudar={setVeiculo}
-            vazio={cliente ? 'Selecione o veículo…' : 'Escolha o cliente primeiro'}
-            opcoes={(veiculos.dados ?? []).map((v) => ({
-              valor: String(numero(v, 'id', 'Id') ?? ''),
-              rotulo: `${texto(v, 'marca', 'Marca')} ${texto(v, 'modelo', 'Modelo')} · ${texto(v, 'placa', 'Placa')}`,
-            }))}
-          />
-        </Campo>
-
-        <Campo rotulo="Responsável">
-          <Selecao
-            valor={funcionario}
-            aoMudar={setFuncionario}
-            vazio="Selecione o responsável…"
-            opcoes={(funcionarios.dados ?? []).map((f) => ({
-              valor: String(numero(f, 'id', 'Id') ?? ''),
-              rotulo: `${texto(f, 'nome', 'Nome')} — ${texto(f, 'cargo', 'Cargo')}`,
-            }))}
-          />
-        </Campo>
-
-        {erro && <Aviso tipo="erro" texto={erro} />}
-
-        <div className="flex gap-2 pt-1">
-          <button type="button" onClick={aoFechar} className="btn-ghost flex-1">
-            Cancelar
-          </button>
-          <button type="submit" className="btn-primary flex-1" disabled={salvando}>
-            {salvando ? 'Salvando…' : 'Salvar'}
-          </button>
-        </div>
-      </form>
-    </Modal>
-  );
-}
-
-function ModalExcluirOrdem({
-  aberto,
-  idOS,
-  aoFechar,
-  aoExcluir,
-}: {
-  aberto: boolean;
-  idOS: number;
-  aoFechar: () => void;
-  aoExcluir: () => void;
-}) {
-  const [erro, setErro] = useState<string | null>(null);
-  const [ocupado, setOcupado] = useState(false);
-
-  async function confirmar() {
-    setErro(null);
-    setOcupado(true);
-    try {
-      await api.excluirOrdem(idOS);
-      aoExcluir();
-    } catch (e) {
-      setErro(e instanceof ErroApi ? e.message : 'Não foi possível excluir a ordem.');
-    } finally {
-      setOcupado(false);
-    }
-  }
-
-  return (
-    <Confirmacao
-      titulo={`Excluir a ordem #${idOS}`}
-      tom="excluir"
-      descricao="Os itens, o orçamento e o histórico de status lançados nela vão junto."
-      aberto={aberto}
-      ocupado={ocupado}
-      erro={erro}
-      aoFechar={aoFechar}
-      aoConfirmar={confirmar}
-    />
-  );
-}
-
-/** Item carregado pela rota própria, e não reaproveitado da listagem. */
-function ModalDetalheItem({ idOS, id, aoFechar }: { idOS: number; id: number | null; aoFechar: () => void }) {
-  const { dados, erro, carregando } = useDados<Registro | null>(
-    async () => (id === null ? null : await api.item(idOS, id)),
-    [idOS, id],
-  );
-
-  return (
-    <Modal titulo="Item da ordem" descricao="Dados vindos da rota por id." aberto={id !== null} aoFechar={aoFechar}>
-      {carregando && <Esqueleto linhas={2} />}
-      {erro && <Aviso tipo="erro" texto={erro} />}
-      {dados && (
-        <dl className="space-y-2.5 text-sm">
-          {[
-            ['Tipo', ehPecaItem(dados) ? 'Peça' : 'Mão de obra'],
-            ['Quantidade', texto(dados, 'quantidadeItem', 'QuantidadeItem')],
-            ['Peça', texto(dados, 'idPeca', 'IdPeca')],
-            ['Funcionário', texto(dados, 'idFuncionario', 'IdFuncionario')],
-          ].map(([rotulo, valor]) => (
-            <div key={rotulo} className="flex justify-between gap-4 border-b border-line/60 pb-2 last:border-0">
-              <dt className="text-ink-mute">{rotulo}</dt>
-              <dd className="truncate font-medium">{valor}</dd>
-            </div>
+    <div className="mt-4 overflow-x-auto">
+      <table className="w-full text-left text-sm">
+        <thead>
+          <tr className="border-b border-line text-xs uppercase tracking-wider text-ink-mute">
+            <th className="py-2 font-semibold">Item</th>
+            <th className="py-2 text-right font-semibold">Qtd</th>
+            <th className="py-2 text-right font-semibold">Unitário</th>
+            <th className="py-2 text-right font-semibold">Subtotal</th>
+          </tr>
+        </thead>
+        <tbody>
+          {itens.map((i, n) => (
+            <tr key={n} className="border-b border-line/50 last:border-0">
+              <td className="py-2">
+                {texto(i, 'descricao', 'Descricao')}
+                <span className="ml-2 text-[11px] text-ink-mute">{texto(i, 'tipo', 'Tipo')}</span>
+              </td>
+              <td className="py-2 text-right tabular-nums">{texto(i, 'quantidade', 'Quantidade')}</td>
+              <td className="py-2 text-right tabular-nums">{moeda(numero(i, 'valorUnitario', 'ValorUnitario'))}</td>
+              <td className="py-2 text-right font-semibold tabular-nums">
+                {moeda(numero(i, 'subtotal', 'Subtotal'))}
+              </td>
+            </tr>
           ))}
-        </dl>
-      )}
-    </Modal>
+        </tbody>
+      </table>
+    </div>
   );
 }
 
-function ModalEditarItem({
-  idOS,
-  item,
-  aoFechar,
-  aoSalvar,
+function Historico({
+  consulta,
 }: {
-  idOS: number;
-  item: Registro | null;
-  aoFechar: () => void;
-  aoSalvar: () => void;
+  consulta: { dados: Registro | null; erro: string | null; carregando: boolean };
 }) {
-  const [quantidade, setQuantidade] = useState('1');
-  const [referencia, setReferencia] = useState('');
-  const [erro, setErro] = useState<string | null>(null);
-  const [salvando, setSalvando] = useState(false);
-  const [carregado, setCarregado] = useState<number | null>(null);
+  if (consulta.carregando) return <Esqueleto linhas={3} />;
+  if (consulta.erro) return <p className="mt-3 text-sm text-ink-mute">{consulta.erro}</p>;
 
-  const id = item ? numero(item, 'id', 'Id') : null;
-  const ehPeca = item ? ehPecaItem(item) : false;
+  const linhas = comoLista(consulta.dados?.historico);
 
-  if (item && id !== carregado) {
-    setCarregado(id);
-    setQuantidade(String(numero(item, 'quantidadeItem', 'QuantidadeItem') ?? 1));
-    setReferencia(String((ehPeca ? numero(item, 'idPeca', 'IdPeca') : numero(item, 'idFuncionario', 'IdFuncionario')) ?? ''));
-    setErro(null);
-  }
-
-  // O tipo do item não muda na edição: trocar peça por mão de obra é outro item.
-  const pecas = useDados<Registro[]>(async () => (item && ehPeca ? comoLista(await api.pecas()) : []), [item, ehPeca]);
-  const funcionarios = useDados<Registro[]>(
-    async () => (item && !ehPeca ? comoLista(await api.funcionarios()) : []),
-    [item, ehPeca],
-  );
-  const lista = ehPeca ? (pecas.dados ?? []) : (funcionarios.dados ?? []);
-
-  async function salvar(e: React.FormEvent) {
-    e.preventDefault();
-    if (id === null) return;
-    if (!referencia) return setErro(ehPeca ? 'Escolha a peça.' : 'Escolha o funcionário.');
-
-    setErro(null);
-    setSalvando(true);
-    try {
-      await api.atualizarItem(idOS, id, {
-        tipoItem: ehPeca ? 1 : 0,
-        quantidadeItem: Number(quantidade),
-        idPeca: ehPeca ? Number(referencia) : null,
-        idFuncionario: ehPeca ? null : Number(referencia),
-      });
-      aoSalvar();
-    } catch (e2) {
-      setErro(e2 instanceof ErroApi ? e2.message : 'Não foi possível salvar o item.');
-    } finally {
-      setSalvando(false);
-    }
+  if (linhas.length === 0) {
+    return <p className="mt-3 text-sm text-ink-mute">Nenhuma transição registrada ainda.</p>;
   }
 
   return (
-    <Modal
-      titulo={ehPeca ? 'Editar peça lançada' : 'Editar mão de obra'}
-      descricao="O tipo do item não muda aqui — remova e lance de novo, se for o caso."
-      aberto={item !== null}
-      aoFechar={aoFechar}
-    >
-      <form onSubmit={salvar} className="space-y-4">
-        <Campo rotulo={ehPeca ? 'Peça' : 'Funcionário'}>
-          <Selecao
-            valor={referencia}
-            aoMudar={setReferencia}
-            vazio={ehPeca ? 'Selecione a peça…' : 'Selecione o funcionário…'}
-            opcoes={lista.map((r) => ({
-              valor: String(numero(r, 'id', 'Id') ?? ''),
-              rotulo: ehPeca
-                ? `${texto(r, 'nome', 'Nome')} — ${moeda(numero(r, 'preco', 'Preco'))}`
-                : `${texto(r, 'nome', 'Nome')} — ${texto(r, 'cargo', 'Cargo')}`,
-            }))}
-          />
-        </Campo>
-
-        <Campo rotulo={ehPeca ? 'Quantidade' : 'Horas'}>
-          <input
-            className="field"
-            type="number"
-            min="1"
-            value={quantidade}
-            onChange={(e) => setQuantidade(e.target.value)}
-            required
-          />
-        </Campo>
-
-        {erro && <Aviso tipo="erro" texto={erro} />}
-
-        <div className="flex gap-2 pt-1">
-          <button type="button" onClick={aoFechar} className="btn-ghost flex-1">
-            Cancelar
-          </button>
-          <button type="submit" className="btn-primary flex-1" disabled={salvando}>
-            {salvando ? 'Salvando…' : 'Salvar'}
-          </button>
-        </div>
-      </form>
-    </Modal>
-  );
-}
-
-function ModalRemoverItem({
-  idOS,
-  item,
-  aoFechar,
-  aoRemover,
-}: {
-  idOS: number;
-  item: Registro | null;
-  aoFechar: () => void;
-  aoRemover: () => void;
-}) {
-  const [erro, setErro] = useState<string | null>(null);
-  const [ocupado, setOcupado] = useState(false);
-
-  async function confirmar() {
-    const id = item ? numero(item, 'id', 'Id') : null;
-    if (id === null) return;
-    setErro(null);
-    setOcupado(true);
-    try {
-      await api.removerItem(idOS, id);
-      aoRemover();
-    } catch (e) {
-      setErro(e instanceof ErroApi ? e.message : 'Não foi possível remover o item.');
-    } finally {
-      setOcupado(false);
-    }
-  }
-
-  return (
-    <Confirmacao
-      titulo="Remover item"
-      descricao={
-        item
-          ? `${ehPecaItem(item) ? 'A peça' : 'A mão de obra'} sai da ordem. O orçamento precisa ser recalculado depois.`
-          : ''
-      }
-      tom="excluir"
-      rotuloAcao="Remover"
-      aberto={item !== null}
-      ocupado={ocupado}
-      erro={erro}
-      aoFechar={aoFechar}
-      aoConfirmar={confirmar}
-    />
+    <ol className="mt-4 space-y-3">
+      {linhas.map((h, i) => (
+        <li key={i} className="flex gap-3">
+          <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-brand" />
+          <div className="min-w-0">
+            <p className="text-sm">
+              {texto(h, 'de', 'De') === '—' ? 'Aberta' : texto(h, 'de', 'De')} →{' '}
+              <span className="font-medium">{texto(h, 'para', 'Para')}</span>
+            </p>
+            <p className="text-[11px] text-ink-mute">
+              {dataCurta(texto(h, 'ocorridoEm', 'OcorridoEm'))}
+              {h.motivo ? ` · ${texto(h, 'motivo', 'Motivo')}` : ''}
+            </p>
+          </div>
+        </li>
+      ))}
+    </ol>
   );
 }
 
 /**
- * Botão de uma ação da ordem.
+ * O diagnóstico, que é a entrada dos itens no fluxo.
  *
- * Desabilitado ele continua na tela, com o motivo embaixo. Sumir com o botão
- * esconderia que a ação existe; deixar habilitado entregaria um erro da API.
- * O `title` repete o motivo para quem navega com leitor de tela.
+ * Os itens vêm preenchidos com um par plausível porque esta tela serve também
+ * à demonstração: digitar quatro campos na frente da câmera só adiciona tempo
+ * morto. Todos continuam editáveis.
  */
-function BotaoDeAcao({
-  acao,
-  ocupado,
-  aoClicar,
+function ModalDiagnostico({
+  aberto,
+  aoFechar,
+  aoRegistrar,
 }: {
-  acao: Acao;
-  ocupado: boolean;
-  aoClicar: () => void;
+  aberto: boolean;
+  aoFechar: () => void;
+  aoRegistrar: (itens: ItemDoDiagnostico[]) => Promise<void>;
 }) {
+  const [itens, setItens] = useState<ItemDoDiagnostico[]>(ITENS_SUGERIDOS);
+  const [erro, setErro] = useState<string | null>(null);
+  const [salvando, setSalvando] = useState(false);
+
+  function alterar(i: number, campo: keyof ItemDoDiagnostico, valor: string) {
+    setItens((atual) =>
+      atual.map((item, n) =>
+        n !== i
+          ? item
+          : {
+              ...item,
+              [campo]:
+                campo === 'quantidade' || campo === 'valorUnitario'
+                  ? Number(valor.replace(',', '.')) || 0
+                  : valor,
+            },
+      ),
+    );
+  }
+
+  const total = itens.reduce((s, i) => s + i.quantidade * i.valorUnitario, 0);
+
+  async function enviar(e: React.FormEvent) {
+    e.preventDefault();
+    if (itens.length === 0) return setErro('Um diagnóstico sem itens não gera orçamento.');
+
+    setErro(null);
+    setSalvando(true);
+    try {
+      await aoRegistrar(itens);
+    } finally {
+      setSalvando(false);
+    }
+  }
+
   return (
-    <span className="flex flex-col gap-1">
-      <button
-        onClick={aoClicar}
-        disabled={!acao.ativa || ocupado}
-        title={acao.motivo}
-        className={acao.principal ? 'btn-primary' : 'btn-ghost'}
-      >
-        {acao.rotulo}
-      </button>
-      {!acao.ativa && acao.motivo && (
-        <span className="max-w-[16rem] text-[11px] leading-snug text-ink-mute">{acao.motivo}</span>
-      )}
-    </span>
+    <Modal
+      titulo="Registrar diagnóstico"
+      descricao="Os itens viram o orçamento no Billing, por evento — não por chamada direta."
+      aberto={aberto}
+      aoFechar={aoFechar}
+    >
+      <form onSubmit={enviar} className="space-y-4">
+        {erro && <Aviso tipo="erro" texto={erro} />}
+
+        {itens.map((item, i) => (
+          <div key={i} className="grid gap-3 rounded-lg border border-line p-3 sm:grid-cols-[1fr_5rem_7rem]">
+            <Campo rotulo="Descrição">
+              <input
+                className="field"
+                value={item.descricao}
+                onChange={(e) => alterar(i, 'descricao', e.target.value)}
+                required
+              />
+            </Campo>
+            <Campo rotulo="Qtd">
+              <input
+                className="field"
+                inputMode="numeric"
+                value={String(item.quantidade)}
+                onChange={(e) => alterar(i, 'quantidade', e.target.value)}
+                required
+              />
+            </Campo>
+            <Campo rotulo="Unitário">
+              <input
+                className="field"
+                inputMode="decimal"
+                value={String(item.valorUnitario)}
+                onChange={(e) => alterar(i, 'valorUnitario', e.target.value)}
+                required
+              />
+            </Campo>
+          </div>
+        ))}
+
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <button
+            type="button"
+            className="btn-ghost px-3 py-1.5 text-xs"
+            onClick={() =>
+              setItens((a) => [...a, { descricao: '', tipo: 'MaoDeObra', quantidade: 1, valorUnitario: 0 }])
+            }
+          >
+            + Item
+          </button>
+          <p className="text-sm text-ink-soft">
+            Total: <span className="font-semibold text-ink">{moeda(total)}</span>
+          </p>
+        </div>
+
+        <button type="submit" className="btn-primary w-full py-2 text-sm" disabled={salvando}>
+          {salvando ? 'Registrando…' : 'Registrar diagnóstico'}
+        </button>
+      </form>
+    </Modal>
+  );
+}
+
+function ModalRejeicao({
+  aberto,
+  aoFechar,
+  aoRejeitar,
+}: {
+  aberto: boolean;
+  aoFechar: () => void;
+  aoRejeitar: (motivo: string) => Promise<void>;
+}) {
+  const [motivo, setMotivo] = useState('Cliente não autorizou o serviço');
+  const [ocupado, setOcupado] = useState(false);
+
+  // Modal e não Confirmacao: a rejeição carrega um motivo, que vai no evento e
+  // aparece no histórico da ordem. Confirmacao é só sim/não, sem campo.
+  async function enviar(e: React.FormEvent) {
+    e.preventDefault();
+    setOcupado(true);
+    try {
+      await aoRejeitar(motivo.trim() || 'Cliente não autorizou o serviço');
+    } finally {
+      setOcupado(false);
+    }
+  }
+
+  return (
+    <Modal
+      titulo="Rejeitar o orçamento"
+      descricao="A saga compensa: cancela o orçamento e a ordem. Sem pagamento feito, não há estorno a emitir."
+      aberto={aberto}
+      aoFechar={aoFechar}
+    >
+      <form onSubmit={enviar} className="space-y-4">
+        <Campo rotulo="Motivo" dica="Vai no evento e aparece no histórico da ordem.">
+          <input className="field" value={motivo} onChange={(e) => setMotivo(e.target.value)} />
+        </Campo>
+        <button type="submit" className="btn-ghost w-full py-2 text-sm" disabled={ocupado}>
+          {ocupado ? 'Rejeitando…' : 'Rejeitar orçamento'}
+        </button>
+      </form>
+    </Modal>
   );
 }

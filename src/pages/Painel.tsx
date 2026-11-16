@@ -1,5 +1,4 @@
 import { Link } from 'react-router-dom';
-import { api, comoLista } from '../lib/api';
 import { useDados } from '../lib/useDados';
 import { useOrdens } from '../lib/useOrdens';
 import { useRotulosOrdem } from '../lib/useCatalogos';
@@ -15,13 +14,12 @@ export default function Painel() {
   const rotulo = useRotulosOrdem(ordens);
 
   /**
-   * A distribuição vem da rota que a API já entrega ordenada por status. Para o
-   * cliente ela é 403 — rota da operação —, e aí a contagem sai das ordens dele.
+   * A Fase 4 não tem mais a rota agrupada por status: o OS Service expõe a
+   * lista, e agrupar é trabalho de quem exibe. Fica null de propósito, para a
+   * contagem cair na lista que `useOrdens` já trouxe — uma consulta a menos
+   * atravessando o APIM a cada abertura do painel.
    */
-  const agrupadas = useDados<Registro[] | null>(
-    async () => (ehCliente ? null : comoLista(await api.ordensPorStatus())),
-    [ehCliente],
-  );
+  const agrupadas = useDados<Registro[] | null>(async () => null, [ehCliente]);
 
   const base = agrupadas.dados ?? ordens;
   const porStatus = STATUS.map((s) => ({

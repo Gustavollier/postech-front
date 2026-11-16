@@ -8,6 +8,7 @@ import Clientes from './pages/Clientes';
 import Pecas from './pages/Pecas';
 import Funcionarios from './pages/Funcionarios';
 import OrdemDetalhe from './pages/OrdemDetalhe';
+import Demonstracao from './pages/Demonstracao';
 import Conta from './pages/Conta';
 import type { ReactNode } from 'react';
 
@@ -31,6 +32,7 @@ export default function App() {
           <Route path="/" element={<Painel />} />
           <Route path="/ordens" element={<Ordens />} />
           <Route path="/ordens/:id" element={<OrdemDetalhe />} />
+          <Route path="/demonstracao" element={<Demonstracao />} />
           <Route path="/clientes" element={<Clientes />} />
           <Route path="/pecas" element={<Pecas />} />
           <Route path="/equipe" element={<Funcionarios />} />

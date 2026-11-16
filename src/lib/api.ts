@@ -1,63 +1,157 @@
 import type { Registro } from './types';
 
-/** Corpos de escrita, espelhando os schemas do OpenAPI. */
-export type ItemOS = {
-  tipoItem: number;
-  quantidadeItem: number;
-  idFuncionario?: number | null;
-  idPeca?: number | null;
-};
+/**
+ * Cliente HTTP do painel — Fase 4.
+ *
+ * A diferença em relação à Fase 3 não é de estilo, é de topologia: não existe
+ * mais uma API só. São quatro microsserviços atrás do Azure API Management, e
+ * o primeiro segmento do caminho é o nome do serviço (ver `apim.tf`, a API de
+ * cada serviço usa `path = each.key`). Daí os prefixos abaixo em vez de um
+ * `/api/v1` único.
+ *
+ * O APIM é a única porta pública: valida o JWT, aplica rate limit por IP e
+ * encaminha para o AKS, ou para a Auth Function em Container Apps no caso de
+ * `/auth`. O painel nunca fala com o cluster direto.
+ *
+ * `subscription_required = false` nas APIs, e o CORS libera qualquer origem com
+ * qualquer header — então o navegador chama o APIM sem chave de subscrição.
+ */
+export const API_BASE =
+  import.meta.env.VITE_API_BASE ?? 'https://pos-tech-fiap-apim.azure-api.net';
+
+/** Prefixo de cada serviço no APIM. */
+const OS = '/os/api/v1';
+const BILLING = '/billing/api/v1';
+const EXECUCAO = '/execucao/api/v1';
+const IDENTIDADE = '/identidade/api/v1';
+
+// ---------------------------------------------------------------------------
+// Corpos de escrita, espelhando os records dos controllers.
+//
+// Os enums vão como TEXTO: os três serviços registram JsonStringEnumConverter,
+// então é "MaoDeObra" e não 0. Mandar número aqui dá 400.
+// ---------------------------------------------------------------------------
+
+export type TipoItem = 'MaoDeObra' | 'Peca';
+
+export type CargoFuncionario =
+  | 'Mecanico'
+  | 'Recepcionista'
+  | 'Gerente'
+  | 'Estoquista'
+  | 'Eletricista'
+  | 'Lavador'
+  | 'Supervisor';
+
+/** Identidade: `NovoCliente`. CPF ou CNPJ, nunca os dois — o banco tem CHECK. */
 export type NovoCliente = {
-  nomeCompleto: string;
   cpf?: string | null;
   cnpj?: string | null;
+  nomeCompleto: string;
   telefone?: string | null;
   email?: string | null;
 };
+
+/** Identidade: `AtualizarClienteRequest` — documento não se altera. */
+export type EdicaoCliente = {
+  nomeCompleto?: string | null;
+  telefone?: string | null;
+  email?: string | null;
+};
+
+/** Identidade: `NovoVeiculo`. */
 export type NovoVeiculo = {
   clienteId: number;
-  marca: string;
-  modelo: string;
-  placa: string;
+  marca?: string | null;
+  modelo?: string | null;
+  placa?: string | null;
   cor?: string | null;
-  anoModelo: number;
-  anoFabricacao: number;
-  kmEntrada: number;
+  anoModelo?: number | null;
+  anoFabricacao?: number | null;
+  kmEntrada?: number | null;
 };
+
+/** Identidade: `DadosDoVeiculo` — placa não se altera, é identidade do veículo. */
+export type EdicaoVeiculo = {
+  marca?: string | null;
+  modelo?: string | null;
+  cor?: string | null;
+  anoModelo?: number | null;
+  anoFabricacao?: number | null;
+  kmEntrada?: number | null;
+};
+
+/** Identidade: `NovoFuncionario`. */
+export type NovoFuncionario = {
+  nome: string;
+  contato: string;
+  cpf: string;
+  cargo: CargoFuncionario;
+  valorHora: number;
+  senha: string;
+};
+
+/** Identidade: `DadosDoFuncionario` — CPF identifica, não entra no corpo. */
+export type EdicaoFuncionario = {
+  nome: string;
+  contato: string;
+  cargo: CargoFuncionario;
+  valorHora: number;
+};
+
+/**
+ * OS: `AbrirOrdemRequest`.
+ *
+ * Carrega nome, descrição do veículo e e-mail porque o OS Service não consulta
+ * o Identidade a cada leitura: o que ele precisa mostrar vem na abertura e fica
+ * no agregado dele. É a escolha de "Identidade é consultado, não coordenado"
+ * do ADR-0006.
+ */
+export type NovaOrdem = {
+  idCliente: number;
+  idVeiculo: number;
+  idFuncionario: number;
+  nomeCliente: string;
+  descricaoVeiculo: string;
+  emailCliente: string;
+};
+
+/** Execução: `ItemDoDiagnosticoRequest`. */
+export type ItemDoDiagnostico = {
+  descricao: string;
+  tipo: TipoItem;
+  /** Só para `tipo: 'Peca'` — é o id do documento no Mongo, texto. */
+  idPeca?: string | null;
+  quantidade: number;
+  valorUnitario: number;
+};
+
+/** Execução: `CadastrarPecaRequest`. */
 export type NovaPeca = {
   nome: string;
   marca?: string | null;
   codigo?: string | null;
   preco: number;
-  unidadeMedida: number;
-  quantidadeEstoque: number;
-};
-/** O corpo de atualizacao nao leva CPF: ele identifica o funcionario na query. */
-export type EdicaoFuncionario = {
-  nome: string;
-  contato: string;
-  cargo: number;
-  valorHora: number;
-};
-export type NovoFuncionario = {
-  nome: string;
-  contato: string;
-  cpf: string;
-  cargo: number;
-  valorHora: number;
-  senha: string;
-  confirmacaoSenha: string;
+  quantidadeEmEstoque: number;
 };
 
-/**
- * Cliente HTTP do painel.
- *
- * Todas as chamadas passam pelo Azure API Management, que é a única porta de
- * entrada pública: ele valida o JWT, aplica rate limit e encaminha para o AKS
- * ou para a Auth Function. O painel nunca fala direto com o cluster.
- */
-export const API_BASE =
-  import.meta.env.VITE_API_BASE ?? 'https://pos-tech-fiap-apim.azure-api.net';
+/** Passos da saga, na ordem — espelha `EPassoDaSaga` do orquestrador. */
+export const PASSOS_DA_SAGA = [
+  'AguardandoDiagnostico',
+  'AguardandoOrcamento',
+  'AguardandoAprovacao',
+  'AguardandoPagamento',
+  'AguardandoExecucao',
+  'Concluida',
+  'Compensando',
+  'Cancelada',
+] as const;
+
+export type PassoDaSaga = (typeof PASSOS_DA_SAGA)[number];
+
+// ---------------------------------------------------------------------------
+// Transporte
+// ---------------------------------------------------------------------------
 
 export class ErroApi extends Error {
   constructor(
@@ -100,19 +194,36 @@ export function definirToken(t: string | null) {
   tokenAtual = t;
 }
 
+/**
+ * Correlação fixada pela tela de demonstração.
+ *
+ * Normalmente cada chamada ganha um id novo. No vídeo isso atrapalha: são seis
+ * ou sete chamadas para uma ordem só, e o Datadog mostraria sete rastros
+ * soltos. Fixando um id, o fluxo inteiro aparece como um rastro — que é
+ * exatamente o que o requisito de rastreamento distribuído pede para mostrar.
+ */
+let correlacaoFixa: string | null = null;
+export function fixarCorrelacao(id: string | null) {
+  correlacaoFixa = id;
+}
+export function correlacaoAtual() {
+  return correlacaoFixa;
+}
+
 async function requisicao<T>(
   metodo: string,
   caminho: string,
   corpo?: unknown,
   opcoes: { semAuth?: boolean } = {},
 ): Promise<T> {
-  const correlationId = novoCorrelationId();
+  const correlationId = correlacaoFixa ?? novoCorrelationId();
   const inicio = performance.now();
 
   const headers: Record<string, string> = {
     Accept: 'application/json',
-    // Propagado ponta a ponta: o APIM reaproveita este ID, a aplicação o coloca
-    // no escopo do logger e ele aparece no Datadog ligando log e trace.
+    // Propagado ponta a ponta: o APIM reaproveita este ID, cada serviço o
+    // coloca no escopo do logger, e ele atravessa a fila dentro do envelope do
+    // evento. É o que liga os quatro serviços num rastro só no Datadog.
     'X-Correlation-ID': correlationId,
   };
   if (corpo !== undefined) headers['Content-Type'] = 'application/json';
@@ -163,13 +274,19 @@ function seguroJson(s: string): unknown {
 function mensagemDeErro(status: number, dados: unknown): string {
   if (dados && typeof dados === 'object') {
     const d = dados as Registro;
-    const m = d.message ?? d.mensagem ?? d.title;
+    const m = d.erro ?? d.message ?? d.mensagem ?? d.title;
     if (typeof m === 'string' && m) return m;
   }
   if (status === 401) return 'Sessão expirada ou token inválido. Entre novamente.';
   if (status === 403) return 'Sem permissão para esta operação.';
   if (status === 404) return 'Recurso não encontrado.';
+  if (status === 409) return 'A operação conflita com o estado atual do recurso.';
   if (status === 429) return 'Muitas tentativas em pouco tempo. Aguarde alguns instantes.';
+  // 502/503/504 têm causa própria na Fase 4: o Billing distingue adquirente
+  // fora do ar, sem configuração e timeout. A mensagem do corpo é melhor que
+  // qualquer texto genérico, e já foi tentada acima.
+  if (status === 503) return 'Serviço indisponível. Verifique a configuração do adquirente.';
+  if (status === 504) return 'O adquirente não respondeu dentro do prazo. Tente novamente.';
   if (status >= 500) return 'O servidor encontrou um erro. Tente novamente em instantes.';
   return `A requisição falhou (HTTP ${status}).`;
 }
@@ -186,108 +303,119 @@ export function comoLista(v: unknown): Registro[] {
   return [];
 }
 
+const doc = (s: string) => s.replace(/\D/g, '');
+
 export const api = {
-  /** Autenticação do cliente por CPF — Azure Function serverless, via APIM. */
+  // --- Autenticação -------------------------------------------------------
+
+  /** Cliente por CPF — Auth Function serverless, via APIM em `/auth`. */
   async autenticarCliente(cpf: string) {
-    return requisicao<Registro>('POST', '/auth', { cpf }, { semAuth: true });
+    return requisicao<Registro>('POST', '/auth', { cpf: doc(cpf) }, { semAuth: true });
   },
 
-  /** Autenticação do funcionário — API principal no AKS, via APIM. */
+  /** Funcionário — Identidade Service no AKS. Rota pública na política do APIM. */
   async autenticarFuncionario(cpf: string, senha: string) {
-    return requisicao<Registro>('POST', '/api/v1/Autenticacao/login', { cpf, senha }, { semAuth: true });
+    return requisicao<Registro>(
+      'POST',
+      `${IDENTIDADE}/autenticacao/login`,
+      { cpf: doc(cpf), senha },
+      { semAuth: true },
+    );
   },
 
-  ordensServico: () => requisicao<unknown>('GET', '/api/v1/ordens-servico'),
-  ordensPorStatus: () => requisicao<unknown>('GET', '/api/v1/ordens-servico/ordenado-por-status'),
-  /** Escopo do cliente: a rota geral é da equipe e recusa um token de cliente. */
-  ordensDoCliente: (idCliente: number) =>
-    requisicao<unknown>('GET', `/api/v1/ordens-servico/cliente/${idCliente}`),
-  ordem: (id: number) => requisicao<Registro>('GET', `/api/v1/ordens-servico/${id}`),
-  criarOrdem: (c: { idCliente: number; idVeiculo: number; idFuncionario: number }) =>
-    requisicao<Registro>('POST', '/api/v1/ordens-servico', c),
-  atualizarStatus: (id: number, idFuncionario: number, status: number) =>
-    requisicao<Registro>('PATCH', `/api/v1/ordens-servico/${id}/status`, { idFuncionario, status }),
+  trocarSenha: (cpf: string, senhaAtual: string, novaSenha: string) =>
+    requisicao<unknown>(
+      'POST',
+      `${IDENTIDADE}/autenticacao/trocar-senha`,
+      { cpf: doc(cpf), senhaAtual, novaSenha },
+      { semAuth: true },
+    ),
 
-  atualizarOrdem: (id: number, c: { idCliente: number; idVeiculo: number; idFuncionario: number }) =>
-    requisicao<unknown>('PUT', `/api/v1/ordens-servico/${id}`, c),
-  excluirOrdem: (id: number) => requisicao<unknown>('DELETE', `/api/v1/ordens-servico/${id}`),
-  /** Histórico de status. Deixou de ser público: agora exige token e posse. */
-  statusDaOrdem: (id: number) => requisicao<Registro>('GET', `/api/v1/ordens-servico/${id}/status`),
+  // --- Ordem de serviço: OS Service, o orquestrador da saga ---------------
 
-  // --- Itens da ordem: mão de obra (0) e peça (1) --------------------------
-  itens: (idOS: number) => requisicao<unknown>('GET', `/api/v1/ordens-servico/${idOS}/itens`),
-  adicionarItem: (idOS: number, item: ItemOS) =>
-    requisicao<unknown>('POST', `/api/v1/ordens-servico/${idOS}/itens`, item),
-  item: (idOS: number, id: number) =>
-    requisicao<Registro>('GET', `/api/v1/ordens-servico/${idOS}/itens/${id}`),
-  atualizarItem: (idOS: number, id: number, item: ItemOS) =>
-    requisicao<unknown>('PUT', `/api/v1/ordens-servico/${idOS}/itens/${id}`, item),
-  removerItem: (idOS: number, id: number) =>
-    requisicao<unknown>('DELETE', `/api/v1/ordens-servico/${idOS}/itens/${id}`),
+  /** `idCliente` filtra no servidor — é o escopo que o token de cliente usa. */
+  ordens: (idCliente?: number) =>
+    requisicao<unknown>(
+      'GET',
+      `${OS}/ordens-servico${idCliente === undefined ? '' : `?idCliente=${idCliente}`}`,
+    ),
+  ordem: (id: number) => requisicao<Registro>('GET', `${OS}/ordens-servico/${id}`),
+  abrirOrdem: (c: NovaOrdem) => requisicao<Registro>('POST', `${OS}/ordens-servico`, c),
+  /** Histórico de status da ordem. */
+  statusDaOrdem: (id: number) => requisicao<Registro>('GET', `${OS}/ordens-servico/${id}/status`),
+  /**
+   * O estado da saga: passo atual, status, ids de orçamento e pagamento, e o
+   * motivo da compensação quando houve. É a leitura que a tela de demonstração
+   * fica consultando para o vídeo mostrar a saga andando.
+   */
+  saga: (id: number) => requisicao<Registro>('GET', `${OS}/ordens-servico/${id}/saga`),
 
-  // --- Orçamento: calcular, enviar ao cliente, cliente responde ------------
-  orcamento: (idOS: number) => requisicao<Registro>('GET', `/api/v1/orcamentos/os/${idOS}`),
-  calcularOrcamento: (idOS: number) =>
-    requisicao<unknown>('POST', `/api/v1/orcamentos/os/${idOS}/calcular`),
-  enviarOrcamento: (idOS: number) =>
-    requisicao<unknown>('POST', `/api/v1/orcamentos/os/${idOS}/enviar`),
-  /** status 1 aprova, 2 recusa — é a única escrita que um cliente faz. */
-  responderOrcamento: (idOS: number, status: number) =>
-    requisicao<unknown>('POST', `/api/v1/orcamentos/os/${idOS}/responder`, { status }),
-  // A rota e /valor/{id}, e nao /{id}/valor. Estava trocada aqui desde o inicio;
-  // nao quebrou nada porque nenhuma tela chegou a chamar.
-  valorDaOrdem: (id: number) => requisicao<Registro>('GET', `/api/v1/ordens-servico/valor/${id}`),
+  // --- Execução: fila da oficina, diagnóstico e finalização ---------------
 
-  // --- Clientes e veículos ------------------------------------------------
-  clientes: () => requisicao<unknown>('GET', '/api/v1/clientes'),
-  cliente: (id: number) => requisicao<Registro>('GET', `/api/v1/clientes/${id}`),
-  /** Busca pelo documento, com ou sem pontuação — a API espera só os dígitos. */
-  clientePorDocumento: (doc: string) =>
-    requisicao<Registro>('GET', `/api/v1/clientes/cpf-cnpj/${doc.replace(/\D/g, '')}`),
-  criarCliente: (c: NovoCliente) => requisicao<unknown>('POST', '/api/v1/clientes', c),
-  atualizarCliente: (id: number, c: NovoCliente) =>
-    requisicao<unknown>('PUT', `/api/v1/clientes/${id}`, c),
-  excluirCliente: (id: number) => requisicao<unknown>('DELETE', `/api/v1/clientes/${id}`),
-  veiculosDoCliente: (id: number) => requisicao<unknown>('GET', `/api/v1/clientes/${id}/veiculos`),
-  criarVeiculo: (v: NovoVeiculo) => requisicao<unknown>('POST', '/api/v1/veiculos', v),
-  veiculo: (id: number) => requisicao<Registro>('GET', `/api/v1/veiculos/${id}`),
-  veiculoPorPlaca: (placa: string) =>
-    requisicao<Registro>('GET', `/api/v1/veiculos/placa/${placa.toUpperCase().replace(/[^A-Z0-9]/g, '')}`),
-  atualizarVeiculo: (id: number, v: NovoVeiculo) =>
-    requisicao<unknown>('PUT', `/api/v1/veiculos/${id}`, v),
+  /** `etapa` filtra a fila; sem ela, vem tudo. */
+  fila: (etapa?: string) =>
+    requisicao<unknown>('GET', `${EXECUCAO}/execucao/fila${etapa ? `?etapa=${encodeURIComponent(etapa)}` : ''}`),
+  ordemEmExecucao: (idOrdem: number) =>
+    requisicao<Registro>('GET', `${EXECUCAO}/execucao/ordens/${idOrdem}`),
+  /** Fecha o diagnóstico com os itens. É o que dispara o orçamento no Billing. */
+  registrarDiagnostico: (idOrdem: number, itens: ItemDoDiagnostico[]) =>
+    requisicao<unknown>('POST', `${EXECUCAO}/execucao/ordens/${idOrdem}/diagnostico`, { itens }),
+  finalizarExecucao: (idOrdem: number) =>
+    requisicao<unknown>('POST', `${EXECUCAO}/execucao/ordens/${idOrdem}/finalizar`),
 
-  // --- Peças --------------------------------------------------------------
-  pecas: () => requisicao<unknown>('GET', '/api/v1/pecas'),
-  criarPeca: (p: NovaPeca) => requisicao<unknown>('POST', '/api/v1/pecas', p),
-  atualizarPeca: (id: number, p: NovaPeca) => requisicao<unknown>('PUT', `/api/v1/pecas/${id}`, p),
-  excluirPeca: (id: number) => requisicao<unknown>('DELETE', `/api/v1/pecas/${id}`),
-  ajustarEstoque: (id: number, quantidade: number) =>
-    requisicao<unknown>('PATCH', `/api/v1/pecas/${id}/estoque`, { quantidade }),
+  // --- Peças: estoque, no Execução ----------------------------------------
 
-  // --- Funcionários -------------------------------------------------------
-  funcionarios: () => requisicao<unknown>('GET', '/api/v1/Funcionario'),
-  funcionario: (id: number) => requisicao<Registro>('GET', `/api/v1/Funcionario/${id}`),
-  funcionarioPorCpf: (cpf: string) =>
-    requisicao<Registro>('GET', `/api/v1/Funcionario/cpf?cpf=${encodeURIComponent(cpf.replace(/\D/g, ''))}`),
-  funcionarioPorNome: (nome: string) =>
-    requisicao<Registro>('GET', `/api/v1/Funcionario/nome?nome=${encodeURIComponent(nome)}`),
-  criarFuncionario: (f: NovoFuncionario) => requisicao<unknown>('POST', '/api/v1/Funcionario', f),
-  /** CPF vai na query: é ele que identifica o funcionário, não um id de rota. */
-  atualizarFuncionario: (cpf: string, f: EdicaoFuncionario) =>
-    requisicao<unknown>('PUT', `/api/v1/Funcionario?cpf=${encodeURIComponent(cpf.replace(/\D/g, ''))}`, f),
-  excluirFuncionario: (cpf: string) =>
-    requisicao<unknown>('DELETE', `/api/v1/Funcionario?cpf=${encodeURIComponent(cpf.replace(/\D/g, ''))}`),
+  pecas: () => requisicao<unknown>('GET', `${EXECUCAO}/pecas`),
+  /** Id de peça é texto: documento do Mongo, não inteiro como na Fase 3. */
+  peca: (id: string) => requisicao<Registro>('GET', `${EXECUCAO}/pecas/${encodeURIComponent(id)}`),
+  cadastrarPeca: (p: NovaPeca) => requisicao<unknown>('POST', `${EXECUCAO}/pecas`, p),
+  entradaDeEstoque: (id: string, quantidade: number) =>
+    requisicao<unknown>('POST', `${EXECUCAO}/pecas/${encodeURIComponent(id)}/entrada`, { quantidade }),
 
-  // --- Conta do funcionário logado ----------------------------------------
-  alterarSenha: (senhaAtual: string, novaSenha: string, confirmacaoSenha: string) =>
-    requisicao<unknown>('PATCH', '/api/v1/Autenticacao/alterar-senha', {
-      senhaAtual,
-      novaSenha,
-      confirmacaoSenha,
-    }),
+  // --- Orçamento e pagamento: Billing -------------------------------------
 
-  tempoMedio: () => requisicao<unknown>('GET', '/api/v1/monitoramento/tempo-execucao-medio'),
+  orcamento: (idOrdem: number) => requisicao<Registro>('GET', `${BILLING}/orcamentos/os/${idOrdem}`),
+  /**
+   * Aprova e cobra, nesta ordem. Pode devolver 502, 503 ou 504 quando o
+   * adquirente falha: nesse caso a aprovação já valeu e repetir a chamada
+   * retoma só a cobrança.
+   */
+  aprovarOrcamento: (idOrdem: number) =>
+    requisicao<Registro>('POST', `${BILLING}/orcamentos/os/${idOrdem}/aprovar`),
+  /** Rejeitar compensa a saga: cancela o orçamento e a ordem. */
+  rejeitarOrcamento: (idOrdem: number, motivo: string) =>
+    requisicao<unknown>('POST', `${BILLING}/orcamentos/os/${idOrdem}/rejeitar`, { motivo }),
 
-  /** Health público — não exige token, é o que o synthetics do Datadog observa. */
-  saude: () => requisicao<unknown>('GET', '/health', undefined, { semAuth: true }),
+  // --- Clientes e veículos: Identidade ------------------------------------
+
+  clientes: () => requisicao<unknown>('GET', `${IDENTIDADE}/clientes`),
+  cliente: (id: number) => requisicao<Registro>('GET', `${IDENTIDADE}/clientes/${id}`),
+  /** Busca por CPF ou CNPJ, com ou sem pontuação — a API quer só os dígitos. */
+  clientePorDocumento: (documento: string) =>
+    requisicao<Registro>('GET', `${IDENTIDADE}/clientes/busca?documento=${encodeURIComponent(doc(documento))}`),
+  criarCliente: (c: NovoCliente) => requisicao<Registro>('POST', `${IDENTIDADE}/clientes`, c),
+  atualizarCliente: (id: number, c: EdicaoCliente) =>
+    requisicao<unknown>('PUT', `${IDENTIDADE}/clientes/${id}`, c),
+  excluirCliente: (id: number) => requisicao<unknown>('DELETE', `${IDENTIDADE}/clientes/${id}`),
+  veiculosDoCliente: (id: number) => requisicao<unknown>('GET', `${IDENTIDADE}/clientes/${id}/veiculos`),
+
+  veiculo: (id: number) => requisicao<Registro>('GET', `${IDENTIDADE}/veiculos/${id}`),
+  criarVeiculo: (v: NovoVeiculo) => requisicao<Registro>('POST', `${IDENTIDADE}/veiculos`, v),
+  atualizarVeiculo: (id: number, v: EdicaoVeiculo) =>
+    requisicao<unknown>('PUT', `${IDENTIDADE}/veiculos/${id}`, v),
+  excluirVeiculo: (id: number) => requisicao<unknown>('DELETE', `${IDENTIDADE}/veiculos/${id}`),
+
+  // --- Funcionários: Identidade -------------------------------------------
+
+  funcionarios: () => requisicao<unknown>('GET', `${IDENTIDADE}/funcionarios`),
+  funcionario: (id: number) => requisicao<Registro>('GET', `${IDENTIDADE}/funcionarios/${id}`),
+  criarFuncionario: (f: NovoFuncionario) => requisicao<Registro>('POST', `${IDENTIDADE}/funcionarios`, f),
+  atualizarFuncionario: (id: number, f: EdicaoFuncionario) =>
+    requisicao<unknown>('PUT', `${IDENTIDADE}/funcionarios/${id}`, f),
+  excluirFuncionario: (id: number) => requisicao<unknown>('DELETE', `${IDENTIDADE}/funcionarios/${id}`),
+
+  // --- Saúde: um por serviço, público, é o que o synthetics observa --------
+
+  saude: (servico: 'os' | 'billing' | 'execucao' | 'identidade') =>
+    requisicao<unknown>('GET', `/${servico}/health`, undefined, { semAuth: true }),
 };

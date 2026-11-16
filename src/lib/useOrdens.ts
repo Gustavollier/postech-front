@@ -15,12 +15,12 @@ export function useOrdens() {
   const ehCliente = sessao?.tipo === 'cliente';
   const clienteId = sessao?.clienteId;
 
+  // O filtro é do servidor: a listagem do OS aceita ?idCliente=. Filtrar no
+  // navegador traria as ordens de todos os clientes até a máquina de um
+  // cliente, o que é vazamento, não só desperdício.
   const consulta = useDados<Registro[]>(async () => {
-    if (ehCliente) {
-      if (clienteId === undefined) return [];
-      return comoLista(await api.ordensDoCliente(clienteId));
-    }
-    return comoLista(await api.ordensServico());
+    if (ehCliente && clienteId === undefined) return [];
+    return comoLista(await api.ordens(ehCliente ? clienteId : undefined));
   }, [ehCliente, clienteId]);
 
   return { ...consulta, ehCliente };

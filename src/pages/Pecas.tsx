@@ -7,7 +7,7 @@ import { moeda, numero, texto } from '../lib/types';
 import type { Registro } from '../lib/types';
 import { Cabecalho } from '../components/Layout';
 import { Erro, Esqueleto, Vazio } from '../components/Base';
-import { Aviso, Campo, Confirmacao, Modal } from '../components/Form';
+import { Aviso, Campo, Modal } from '../components/Form';
 import { IconeAtualizar } from '../components/Icones';
 
 /** Estoque baixo é condição de atenção — cor de status, sempre com rótulo junto. */
@@ -23,8 +23,6 @@ export default function Pecas() {
   const { sessao } = useAuth();
   const gerente = ehGerente(sessao);
   const [nova, setNova] = useState(false);
-  const [edicao, setEdicao] = useState<Registro | null>(null);
-  const [exclusao, setExclusao] = useState<Registro | null>(null);
   const [ajuste, setAjuste] = useState<Registro | null>(null);
   const [aviso, setAviso] = useState<{ tipo: 'erro' | 'ok'; texto: string } | null>(null);
 
@@ -74,7 +72,7 @@ export default function Pecas() {
               </thead>
               <tbody>
                 {pecas.map((p, i) => {
-                  const qtd = numero(p, 'quantidadeEstoque', 'QuantidadeEstoque');
+                  const qtd = numero(p, 'quantidadeEmEstoque', 'QuantidadeEmEstoque');
                   const n = nivel(qtd);
                   return (
                     <tr key={String(numero(p, 'id', 'Id') ?? i)} className="border-b border-line/50 last:border-0 hover:bg-raised/40">
@@ -97,21 +95,14 @@ export default function Pecas() {
                           >
                             {n.rotulo}
                           </span>
-                          <button onClick={() => setAjuste(p)} className="btn-ghost px-2 py-1 text-[11px]">
-                            estoque
-                          </button>
+                          {/* Editar e desativar peça saíram: o catálogo do
+                              Execução expõe listar, obter, cadastrar e entrada
+                              de estoque, e não tem PUT nem DELETE. Botão sem
+                              rota é caminho que termina em 404. */}
                           {gerente && (
-                            <>
-                              <button onClick={() => setEdicao(p)} className="btn-ghost px-2 py-1 text-[11px]">
-                                editar
-                              </button>
-                              <button
-                                onClick={() => setExclusao(p)}
-                                className="btn-ghost px-2 py-1 text-[11px] text-[#c98500] hover:border-[#c98500]/60"
-                              >
-                                desativar
-                              </button>
-                            </>
+                            <button onClick={() => setAjuste(p)} className="btn-ghost px-2 py-1 text-[11px]">
+                              entrada
+                            </button>
                           )}
                         </div>
                       </td>
@@ -134,32 +125,12 @@ export default function Pecas() {
         }}
       />
 
-      <ModalPeca
-        peca={edicao}
-        aoFechar={() => setEdicao(null)}
-        aoSalvar={() => {
-          setEdicao(null);
-          setAviso({ tipo: 'ok', texto: 'Peça atualizada.' });
-          void recarregar();
-        }}
-      />
-
-      <ModalExcluirPeca
-        peca={exclusao}
-        aoFechar={() => setExclusao(null)}
-        aoExcluir={() => {
-          setExclusao(null);
-          setAviso({ tipo: 'ok', texto: 'Peça removida do catálogo.' });
-          void recarregar();
-        }}
-      />
-
       <ModalAjuste
         peca={ajuste}
         aoFechar={() => setAjuste(null)}
         aoAjustar={() => {
           setAjuste(null);
-          setAviso({ tipo: 'ok', texto: 'Estoque ajustado.' });
+          setAviso({ tipo: 'ok', texto: 'Entrada registrada no estoque.' });
           void recarregar();
         }}
       />
@@ -181,16 +152,15 @@ function ModalNovaPeca({ aberto, aoFechar, aoCriar }: { aberto: boolean; aoFecha
     setErro(null);
     setSalvando(true);
     try {
-      await api.criarPeca({
+      // `unidadeMedida` saiu: o catálogo da Fase 4 vive no Execução, em
+      // MongoDB, e o documento não tem esse campo. Era um inteiro livre que
+      // todo o catálogo preenchia com 0 — não se perdeu informação nenhuma.
+      await api.cadastrarPeca({
         nome,
         marca: marca || null,
         codigo: codigo || null,
         preco: Number(preco.replace(',', '.')),
-        // O domínio não define um enum para unidade de medida — é um inteiro
-        // livre, e todo o catálogo existente usa 0. Mantemos o mesmo valor em
-        // vez de inventar uma semântica que a API não declara.
-        unidadeMedida: 0,
-        quantidadeEstoque: Number(estoque),
+        quantidadeEmEstoque: Number(estoque),
       });
       setNome('');
       setMarca('');
@@ -273,21 +243,26 @@ function ModalAjuste({
   const [erro, setErro] = useState<string | null>(null);
   const [salvando, setSalvando] = useState(false);
 
-  const atual = peca ? numero(peca, 'quantidadeEstoque', 'QuantidadeEstoque') : null;
+  const atual = peca ? numero(peca, 'quantidadeEmEstoque', 'QuantidadeEmEstoque') : null;
 
   async function salvar(e: React.FormEvent) {
     e.preventDefault();
-    const id = numero(peca ?? {}, 'id', 'Id');
-    if (id === null) return;
+    // Id de peça é texto na Fase 4: o catálogo vive no Mongo e a chave é o
+    // ObjectId do documento, não um inteiro de banco relacional.
+    const id = peca ? String(peca.id ?? peca.Id ?? '') : '';
+    if (!id) return;
 
     setErro(null);
     setSalvando(true);
     try {
-      await api.ajustarEstoque(id, Number(quantidade));
+      // Entrada de estoque, não ajuste para um valor absoluto: o Execução
+      // registra o quanto entrou e soma. Reserva de peça é do fluxo da ordem e
+      // sai pelo outro lado, atômica, por ordem.
+      await api.entradaDeEstoque(id, Number(quantidade));
       setQuantidade('0');
       aoAjustar();
     } catch (e2) {
-      setErro(e2 instanceof ErroApi ? e2.message : 'Não foi possível ajustar o estoque.');
+      setErro(e2 instanceof ErroApi ? e2.message : 'Não foi possível registrar a entrada no estoque.');
     } finally {
       setSalvando(false);
     }
@@ -325,152 +300,5 @@ function ModalAjuste({
         </div>
       </form>
     </Modal>
-  );
-}
-
-/** Edição da peça. O PUT exige o registro inteiro, não só o que mudou. */
-function ModalPeca({
-  peca,
-  aoFechar,
-  aoSalvar,
-}: {
-  peca: Registro | null;
-  aoFechar: () => void;
-  aoSalvar: () => void;
-}) {
-  const [campos, setCampos] = useState({ nome: '', marca: '', codigo: '', preco: '', estoque: '0' });
-  const [erro, setErro] = useState<string | null>(null);
-  const [salvando, setSalvando] = useState(false);
-  const [carregado, setCarregado] = useState<number | null>(null);
-
-  // Preenche a partir da peça escolhida, uma vez por peça, sem efeito extra.
-  const id = peca ? numero(peca, 'id', 'Id') : null;
-  if (peca && id !== carregado) {
-    setCarregado(id);
-    setCampos({
-      nome: texto(peca, 'nome', 'Nome').replace('—', ''),
-      marca: texto(peca, 'marca', 'Marca').replace('—', ''),
-      codigo: texto(peca, 'codigo', 'Codigo').replace('—', ''),
-      preco: String(numero(peca, 'preco', 'Preco') ?? ''),
-      estoque: String(numero(peca, 'quantidadeEstoque', 'QuantidadeEstoque') ?? 0),
-    });
-    setErro(null);
-  }
-
-  async function salvar(e: React.FormEvent) {
-    e.preventDefault();
-    if (id === null) return;
-    setErro(null);
-    setSalvando(true);
-    try {
-      await api.atualizarPeca(id, {
-        nome: campos.nome,
-        marca: campos.marca || null,
-        codigo: campos.codigo || null,
-        preco: Number(campos.preco.replace(',', '.')),
-        unidadeMedida: numero(peca ?? {}, 'unidadeMedida', 'UnidadeMedida') ?? 0,
-        quantidadeEstoque: Number(campos.estoque),
-      });
-      aoSalvar();
-    } catch (e2) {
-      setErro(e2 instanceof ErroApi ? e2.message : 'Não foi possível salvar a peça.');
-    } finally {
-      setSalvando(false);
-    }
-  }
-
-  return (
-    <Modal titulo="Editar peça" descricao="Alterações valem para os próximos lançamentos." aberto={peca !== null} aoFechar={aoFechar}>
-      <form onSubmit={salvar} className="space-y-4">
-        <Campo rotulo="Nome">
-          <input className="field" value={campos.nome} onChange={(e) => setCampos({ ...campos, nome: e.target.value })} required />
-        </Campo>
-
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Campo rotulo="Marca">
-            <input className="field" value={campos.marca} onChange={(e) => setCampos({ ...campos, marca: e.target.value })} />
-          </Campo>
-          <Campo rotulo="Código">
-            <input className="field font-mono" value={campos.codigo} onChange={(e) => setCampos({ ...campos, codigo: e.target.value })} />
-          </Campo>
-        </div>
-
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Campo rotulo="Preço (R$)">
-            <input
-              className="field"
-              type="number"
-              step="0.01"
-              min="0"
-              value={campos.preco}
-              onChange={(e) => setCampos({ ...campos, preco: e.target.value })}
-              required
-            />
-          </Campo>
-          <Campo rotulo="Estoque">
-            <input
-              className="field"
-              type="number"
-              min="0"
-              value={campos.estoque}
-              onChange={(e) => setCampos({ ...campos, estoque: e.target.value })}
-              required
-            />
-          </Campo>
-        </div>
-
-        {erro && <Aviso tipo="erro" texto={erro} />}
-
-        <div className="flex gap-2 pt-1">
-          <button type="button" onClick={aoFechar} className="btn-ghost flex-1">
-            Cancelar
-          </button>
-          <button type="submit" className="btn-primary flex-1" disabled={salvando}>
-            {salvando ? 'Salvando…' : 'Salvar'}
-          </button>
-        </div>
-      </form>
-    </Modal>
-  );
-}
-
-function ModalExcluirPeca({
-  peca,
-  aoFechar,
-  aoExcluir,
-}: {
-  peca: Registro | null;
-  aoFechar: () => void;
-  aoExcluir: () => void;
-}) {
-  const [erro, setErro] = useState<string | null>(null);
-  const [ocupado, setOcupado] = useState(false);
-
-  async function confirmar() {
-    const id = numero(peca ?? {}, 'id', 'Id');
-    if (id === null) return;
-    setErro(null);
-    setOcupado(true);
-    try {
-      await api.excluirPeca(id);
-      aoExcluir();
-    } catch (e) {
-      setErro(e instanceof ErroApi ? e.message : 'Não foi possível excluir a peça.');
-    } finally {
-      setOcupado(false);
-    }
-  }
-
-  return (
-    <Confirmacao
-      titulo="Desativar peça"
-      descricao={peca ? `${texto(peca, 'nome', 'Nome')} sai do catálogo e deixa de aparecer no lançamento de itens.` : ''}
-      tom="desativar"
-      aberto={peca !== null}
-      ocupado={ocupado}
-      erro={erro}
-      aoFechar={aoFechar}
-      aoConfirmar={confirmar}
-    />
   );
 }

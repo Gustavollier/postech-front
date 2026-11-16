@@ -74,6 +74,11 @@ function Permissoes() {
 export default function Conta() {
   const { sessao, sair } = useAuth();
 
+  // O CPF é digitado porque a rota de troca de senha do Identidade é pública
+  // na política do APIM — quem acabou de perder a senha pode não ter token — e
+  // por isso ela identifica o funcionário pelo documento, não pelo JWT. A
+  // sessão guarda nome e cargo, nunca o CPF.
+  const [cpf, setCpf] = useState('');
   const [atual, setAtual] = useState('');
   const [nova, setNova] = useState('');
   const [confirmacao, setConfirmacao] = useState('');
@@ -89,7 +94,7 @@ export default function Conta() {
 
     setSalvando(true);
     try {
-      await api.alterarSenha(atual, nova, confirmacao);
+      await api.trocarSenha(cpf, atual, nova);
       setAtual('');
       setNova('');
       setConfirmacao('');
@@ -144,6 +149,18 @@ export default function Conta() {
 
           {sessao?.tipo !== 'cliente' && (
             <form onSubmit={salvar} className="mt-5 max-w-md space-y-4">
+              <Campo rotulo="CPF" dica="O Identidade identifica o funcionário pelo documento.">
+                <input
+                  id="cpf-troca-senha"
+                  className="field font-mono"
+                  inputMode="numeric"
+                  autoComplete="username"
+                  value={cpf}
+                  onChange={(e) => setCpf(e.target.value)}
+                  required
+                />
+              </Campo>
+
               <Campo rotulo="Senha atual">
                 <input
                   id="senha-atual"

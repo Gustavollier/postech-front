@@ -217,10 +217,31 @@ function ModalNovaOrdem({
 
     setSalvando(true);
     try {
-      await api.criarOrdem({
+      // A Fase 4 manda nome, descrição do veículo e e-mail junto: o OS Service
+      // guarda isso no agregado dele em vez de consultar o Identidade a cada
+      // leitura da ordem (ADR-0006, "Identidade é consultado, não coordenado").
+      // Os valores saem das listas que este modal já carregou.
+      const registroCliente = (clientes.dados ?? []).find((c) => String(c.id) === cliente);
+      const registroVeiculo = (veiculos.dados ?? []).find((v) => String(v.id) === veiculo);
+
+      const nomeCliente = String(registroCliente?.nomeCompleto ?? registroCliente?.nome ?? '').trim();
+      const emailCliente = String(registroCliente?.email ?? '').trim();
+
+      if (!emailCliente)
+        return setErro('Este cliente não tem e-mail cadastrado, e a cobrança do orçamento precisa dele.');
+
+      const descricaoVeiculo = [registroVeiculo?.marca, registroVeiculo?.modelo, registroVeiculo?.placa]
+        .filter(Boolean)
+        .join(' ')
+        .trim();
+
+      await api.abrirOrdem({
         idCliente: Number(cliente),
         idVeiculo: Number(veiculo),
         idFuncionario: Number(funcionario),
+        nomeCliente,
+        descricaoVeiculo,
+        emailCliente,
       });
       setCliente('');
       setVeiculo('');

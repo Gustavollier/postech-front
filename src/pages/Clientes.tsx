@@ -32,7 +32,6 @@ export default function Clientes() {
 
   const { dados, erro, carregando, recarregar } = useDados<Registro[]>(async () => comoLista(await api.clientes()));
 
-  const [modoBusca, setModoBusca] = useState<'documento' | 'placa'>('documento');
   const [termo, setTermo] = useState('');
   const [busca, setBusca] = useState<Busca | null>(null);
 
@@ -46,11 +45,12 @@ export default function Clientes() {
   const clientes = dados ?? [];
 
   /**
-   * Busca no servidor, não filtro da lista carregada.
+   * Busca no servidor, pelo documento.
    *
-   * Por placa o caminho é indireto de propósito, e é o da oficina: o carro
-   * chega, você tem a placa e quer saber de quem é. A rota de veículo devolve o
-   * ClienteId, e com ele buscamos o dono.
+   * A busca por placa saiu: o Identidade da Fase 4 expõe veículo por id, e não
+   * tem rota por placa. Varrer os veículos de cada cliente para achar uma placa
+   * seria uma chamada ao APIM por cliente, e manter o botão sem rota deixaria
+   * um caminho que termina em erro.
    */
   async function buscar(e: React.FormEvent) {
     e.preventDefault();
@@ -59,29 +59,14 @@ export default function Clientes() {
 
     setBusca({ carregando: true, erro: null, cliente: null, nota: null });
     try {
-      if (modoBusca === 'documento') {
-        const cliente = await api.clientePorDocumento(q);
-        setBusca({ carregando: false, erro: null, cliente, nota: null });
-      } else {
-        const veiculo = await api.veiculoPorPlaca(q);
-        const idDono = numero(veiculo, 'clienteId', 'ClienteId');
-        if (idDono === null) throw new ErroApi(404, 'Veículo sem dono identificado.', null);
-        const cliente = await api.cliente(idDono);
-        setBusca({
-          carregando: false,
-          erro: null,
-          cliente,
-          nota: `Dono de ${texto(veiculo, 'marca', 'Marca')} ${texto(veiculo, 'modelo', 'Modelo')} · ${texto(veiculo, 'placa', 'Placa')}`,
-        });
-      }
+      const cliente = await api.clientePorDocumento(q);
+      setBusca({ carregando: false, erro: null, cliente, nota: null });
     } catch (e2) {
       setBusca({
         carregando: false,
         erro:
           e2 instanceof ErroApi && e2.status === 404
-            ? modoBusca === 'documento'
-              ? 'Nenhum cliente com esse documento.'
-              : 'Nenhum veículo com essa placa.'
+            ? 'Nenhum cliente com esse documento.'
             : 'Falha na busca.',
         cliente: null,
         nota: null,
@@ -121,28 +106,13 @@ export default function Clientes() {
       )}
 
       <form onSubmit={buscar} className="mb-5 flex flex-wrap items-center gap-2">
-        <div className="flex rounded-xl border border-line bg-panel p-1">
-          {(['documento', 'placa'] as const).map((m) => (
-            <button
-              key={m}
-              type="button"
-              onClick={() => setModoBusca(m)}
-              className={[
-                'rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors',
-                modoBusca === m ? 'bg-brand text-white' : 'text-ink-soft hover:text-ink',
-              ].join(' ')}
-            >
-              {m === 'documento' ? 'CPF / CNPJ' : 'Placa'}
-            </button>
-          ))}
-        </div>
         <input
           id="busca-cliente"
-          className={`field h-10 flex-1 py-2 sm:max-w-xs ${modoBusca === 'placa' ? 'font-mono uppercase' : ''}`}
-          placeholder={modoBusca === 'documento' ? 'Buscar por CPF ou CNPJ…' : 'Buscar pela placa…'}
+          className="field h-10 flex-1 py-2 sm:max-w-xs"
+          placeholder="Buscar por CPF ou CNPJ…"
           value={termo}
-          onChange={(e) => setTermo(modoBusca === 'placa' ? e.target.value.toUpperCase() : e.target.value)}
-          inputMode={modoBusca === 'documento' ? 'numeric' : 'text'}
+          onChange={(e) => setTermo(e.target.value)}
+          inputMode="numeric"
         />
         <button type="submit" className="btn-ghost px-4 py-2 text-xs" disabled={busca?.carregando}>
           {busca?.carregando ? 'Buscando…' : 'Buscar'}
@@ -392,11 +362,12 @@ function ModalEditarVeiculo({
     setErro(null);
     setSalvando(true);
     try {
+      // Dono e placa saem do corpo: o Identidade da Fase 4 não aceita trocar
+      // nenhum dos dois na edição. Placa identifica o veículo e tem UNIQUE no
+      // banco; transferir de dono é outra operação, não um PUT de cadastro.
       await api.atualizarVeiculo(id, {
-        clienteId,
         marca: campos.marca,
         modelo: campos.modelo,
-        placa: campos.placa.toUpperCase().replace(/[^A-Z0-9]/g, ''),
         cor: campos.cor || null,
         anoModelo: Number(campos.ano),
         anoFabricacao: Number(campos.ano),
@@ -488,18 +459,14 @@ function ModalEditarCliente({
     e.preventDefault();
     if (id === null || !cliente) return;
 
-    // O documento vai junto porque o PUT substitui o cadastro inteiro; mandar
-    // sem ele apagaria o CPF ou o CNPJ de quem já tinha.
-    const cpf = texto(cliente, 'cpf', 'CPF');
-    const cnpj = texto(cliente, 'cnpj', 'CNPJ');
-
     setErro(null);
     setSalvando(true);
     try {
+      // Documento fora do corpo: o Identidade não aceita alterar CPF ou CNPJ na
+      // edição. Tem UNIQUE nos dois e CHECK de um documento só — trocar
+      // documento é criar outra pessoa, não editar esta.
       await api.atualizarCliente(id, {
         nomeCompleto: campos.nome,
-        cpf: cpf === '—' ? null : cpf,
-        cnpj: cnpj === '—' ? null : cnpj,
         telefone: campos.telefone || null,
         email: campos.email || null,
       });
